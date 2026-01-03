@@ -1,9 +1,10 @@
 import Foundation
 import AVFoundation
 import Photos
-import SwiftUI
 import UIKit
 import os
+
+@preconcurrency import AVFoundation   // Suppress non-Sendable warnings
 
 private let logger = Logger(subsystem: "TravelVidRecorder", category: "RecordingManager")
 
@@ -11,574 +12,356 @@ private let logger = Logger(subsystem: "TravelVidRecorder", category: "Recording
 enum Resolution: String, CaseIterable, Identifiable {
     case p720 = "720p"
     case p1080 = "1080p"
-    case p2K = "2K"
     case p4K = "4K"
 
     var id: String { rawValue }
 
     var preset: AVCaptureSession.Preset {
         switch self {
+        case .p720: return .hd1280x720
         case .p1080: return .hd1920x1080
-        case .p2K:   return .hd1920x1080 // placeholder
-        case .p720:  return .hd1280x720
-        case .p4K:   return .hd4K3840x2160
+        case .p4K: return .hd4K3840x2160
         }
     }
 }
 
 // MARK: - CameraType
 enum CameraType: String, CaseIterable, Identifiable {
-    case ultraWide = "Ultra-Wide"
     case wide = "Wide"
-    case telephoto = "Telephoto"
+    case ultraWide = "Ultra-Wide"
 
     var id: String { rawValue }
 
-    var avDeviceType: AVCaptureDevice.DeviceType {
+    var avType: AVCaptureDevice.DeviceType {
         switch self {
+        case .wide: return .builtInWideAngleCamera
         case .ultraWide: return .builtInUltraWideCamera
-        case .telephoto: return .builtInTelephotoCamera
-        case .wide:      return .builtInWideAngleCamera
         }
     }
 }
 
-// MARK: - Recording model
+// MARK: - RecordingDisplayMode
+enum RecordingDisplayMode: String, CaseIterable, Identifiable {
+    case coverImage = "Cover Image"
+    case tetris = "Tetris"
+    
+    var id: String { rawValue }
+}
+
+// MARK: - Stop Recording Gesture
+enum StopRecordingGesture: String, CaseIterable, Identifiable {
+    case fourTaps = "4 Taps Anywhere"
+    case fiveTaps = "5 Taps Anywhere"
+    case swipeDown = "Swipe Down"
+    case swipeLeft = "Swipe Left"
+    case swipeRight = "Swipe Right"
+    case topLeftCorner = "5 Taps Top-Left Corner"
+    case topRightCorner = "5 Taps Top-Right Corner"
+    case doubleTapHold = "Double Tap & Hold (2s)"
+    
+    var id: String { rawValue }
+    
+    var description: String {
+        switch self {
+        case .fourTaps: return "Tap screen 4 times quickly"
+        case .fiveTaps: return "Tap screen 5 times quickly"
+        case .swipeDown: return "Swipe down from top"
+        case .swipeLeft: return "Swipe left across screen"
+        case .swipeRight: return "Swipe right across screen"
+        case .topLeftCorner: return "Tap top-left corner 5 times"
+        case .topRightCorner: return "Tap top-right corner 5 times"
+        case .doubleTapHold: return "Double tap then hold for 2 seconds"
+        }
+    }
+}
+
+// MARK: - Recording Model
 struct Recording: Identifiable {
     let id = UUID()
     let name: String
     let duration: TimeInterval
     let size: Int64
     let url: URL
-    let creationDate: Date?
+    let creation: Date?
 }
 
 // MARK: - RecordingManager
 @MainActor
 class RecordingManager: NSObject, ObservableObject {
 
-    // UI-facing state
     @Published var isRecording = false
-    @Published var currentDuration: TimeInterval = 0
+    @Published var recordings: [Recording] = []
+    @Published var segmentLength: TimeInterval = 120
     @Published var selectedResolution: Resolution = .p1080
     @Published var audioOn = true
-    @Published var recordings: [Recording] = []
-    @Published var lastErrorMessage: String?
-    @Published var selectedCameraType: CameraType = .ultraWide   // safer default than ultraWide
-    @Published var lastSegmentSaved: Date?
+    
+    // NEW: Popup toggle, display mode, and stop gesture
+    @Published var showFakePopups = true
+    @Published var recordingDisplayMode: RecordingDisplayMode = .coverImage
+    @Published var stopGesture: StopRecordingGesture = .fiveTaps
 
-    // segment length in seconds (default 2 min)
-    @Published var segmentDuration: TimeInterval = 120
+    @Published var cameraPosition: AVCaptureDevice.Position = .back
+    @Published var cameraType: CameraType = .wide
 
-    // Capture session internals
     private var captureSession: AVCaptureSession?
-    private var isSessionConfigured = false
-
-    private var videoDeviceInput: AVCaptureDeviceInput?
-    private var audioDeviceInput: AVCaptureDeviceInput?
     private var movieOutput: AVCaptureMovieFileOutput?
+    private var videoInput: AVCaptureDeviceInput?
+    private var audioInput: AVCaptureDeviceInput?
 
+    private var segmentTimer: Timer?
+    private var isSegmenting = false
     private var activeSegmentURL: URL?
 
-    // state flags
-    private var isSegmenting = false
-    private var isStoppingForGood = false
-
-    // timers
-    private var durationTimer: Timer?
-    private var segmentTimer: Timer?
-
-    // brightness
-    private var originalBrightness: CGFloat = UIScreen.main.brightness
-    private var brightnessDimmed = false
-
-    // export prefs
-    private var shouldAutoSave = true
-
-    // background task
-    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
-
-    // MARK: - Init / Deinit
     override init() {
         super.init()
-        createVideoDirectory()
-        Task { await loadExistingRecordings() }
+        createDirectory()
+        Task { await loadRecordings() }
+        setupSafetyNotifications()
     }
-
-
-    // MARK: - Public high-level entry point
-    /// Call this from the UI before presenting RecordingView.
-    /// Ensures permissions and a configured running session.
-    func prepareIfAuthorized(
-        resolution: Resolution,
-        audioOn: Bool,
-        cameraPosition: AVCaptureDevice.Position = .back
-    ) async -> Bool {
-
-        // Camera permission
-        let camOK = await Self.requestVideoPermission()
-        if !camOK {
-            lastErrorMessage = "Camera access denied. Please enable it in Settings."
-            return false
-        }
-
-        // Mic permission (optional if audioOn == false)
-        var micOK = true
-        if audioOn {
-            micOK = await Self.requestAudioPermission()
-            if !micOK {
-                logger.warning("⚠️ Mic access denied, continuing video-only.")
-            }
-        }
-
-        // Configure once
-        configureSessionIfNeeded(
-            resolution: resolution,
-            audioOn: audioOn && micOK,
-            cameraPosition: cameraPosition
+    
+    // MARK: - Safety Notifications (NEW)
+    private func setupSafetyNotifications() {
+        // Listen for safe stop requests
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSafeStop),
+            name: NSNotification.Name("SafeStopRecording"),
+            object: nil
         )
-
-        // Start session
-        if let session = captureSession, !session.isRunning {
-            DispatchQueue.global(qos: .userInitiated).async {
-                session.startRunning()
-                logger.info("✅ Session running")
-            }
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleEmergencyStop),
+            name: NSNotification.Name("EmergencyStopRecording"),
+            object: nil
+        )
+    }
+    
+    @objc private func handleSafeStop() {
+        print("🛡️ Safe stop requested - gracefully stopping recording")
+        if isRecording {
+            // Stop recording immediately when app backgrounds
+            stopRecording()
         }
-
-        return true
+    }
+    
+    @objc private func handleEmergencyStop() {
+        print("🚨 Emergency stop - forcing immediate save")
+        if isRecording {
+            isRecording = false
+            segmentTimer?.invalidate()
+            
+            // Force synchronous stop
+            movieOutput?.stopRecording()
+        }
     }
 
     // MARK: - Permissions
-    private static func requestVideoPermission() async -> Bool {
+    private func requestVideo() async -> Bool {
         await withCheckedContinuation { cont in
             switch AVCaptureDevice.authorizationStatus(for: .video) {
-            case .authorized:
-                cont.resume(returning: true)
+            case .authorized: cont.resume(returning: true)
             case .notDetermined:
-                AVCaptureDevice.requestAccess(for: .video) { allowed in
-                    cont.resume(returning: allowed)
-                }
-            default:
-                cont.resume(returning: false)
+                AVCaptureDevice.requestAccess(for: .video) { allowed in cont.resume(returning: allowed) }
+            default: cont.resume(returning: false)
             }
         }
     }
 
-    private static func requestAudioPermission() async -> Bool {
+    private func requestAudio() async -> Bool {
         await withCheckedContinuation { cont in
             switch AVCaptureDevice.authorizationStatus(for: .audio) {
-            case .authorized:
-                cont.resume(returning: true)
+            case .authorized: cont.resume(returning: true)
             case .notDetermined:
-                AVCaptureDevice.requestAccess(for: .audio) { allowed in
-                    cont.resume(returning: allowed)
-                }
-            default:
-                cont.resume(returning: false)
+                AVCaptureDevice.requestAccess(for: .audio) { allowed in cont.resume(returning: allowed) }
+            default: cont.resume(returning: false)
             }
         }
     }
 
-    // MARK: - Session configuration
-    private func configureSessionIfNeeded(
-        resolution: Resolution,
-        audioOn: Bool,
-        cameraPosition: AVCaptureDevice.Position
-    ) {
-        if isSessionConfigured {
-            // Update UI expectations without tearing apart a running session
-            self.selectedResolution = resolution
-            self.audioOn = audioOn
-            return
-        }
+    // MARK: - Session Setup
+    func prepareSession() async -> Bool {
+        let cam = await requestVideo()
+        if !cam { return false }
 
-        selectedResolution = resolution
-        self.audioOn = audioOn
+        let mic = audioOn ? await requestAudio() : true
 
         let session = AVCaptureSession()
-        captureSession = session
         session.beginConfiguration()
-        session.sessionPreset = resolution.preset
+        session.sessionPreset = selectedResolution.preset
 
-        // VIDEO INPUT
-        let preferredType = selectedCameraType.avDeviceType
-        let videoDevice = AVCaptureDevice.default(preferredType, for: .video, position: cameraPosition)
-            ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: cameraPosition)
-
-        guard let videoDevice else {
-            lastErrorMessage = "No compatible camera."
-            session.commitConfiguration()
-            return
-        }
-
+        // Video input
+        guard let vdevice = bestDevice() else { return false }
         do {
-            let vInput = try AVCaptureDeviceInput(device: videoDevice)
-            if session.canAddInput(vInput) {
-                session.addInput(vInput)
-                videoDeviceInput = vInput
-            } else {
-                logger.error("❌ Cannot add video input")
-            }
-        } catch {
-            lastErrorMessage = "Video input error: \(error.localizedDescription)"
-            logger.error("Video input error: \(error.localizedDescription)")
-        }
+            let vInput = try AVCaptureDeviceInput(device: vdevice)
+            if session.canAddInput(vInput) { session.addInput(vInput); videoInput = vInput }
+        } catch { return false }
 
-        // AUDIO INPUT
-        if audioOn, let mic = AVCaptureDevice.default(for: .audio) {
+        // Audio input
+        if mic, let micDev = AVCaptureDevice.default(for: .audio) {
             do {
-                let aInput = try AVCaptureDeviceInput(device: mic)
-                if session.canAddInput(aInput) {
-                    session.addInput(aInput)
-                    audioDeviceInput = aInput
-                }
-            } catch {
-                logger.warning("Audio input failed: \(error.localizedDescription)")
-            }
+                let aInput = try AVCaptureDeviceInput(device: micDev)
+                if session.canAddInput(aInput) { session.addInput(aInput); audioInput = aInput }
+            } catch {}
         }
 
-        // MOVIE OUTPUT
+        // Output
         let movie = AVCaptureMovieFileOutput()
         if session.canAddOutput(movie) {
             session.addOutput(movie)
             movieOutput = movie
-        } else {
-            lastErrorMessage = "Cannot add movie output."
-            logger.error("❌ Cannot add movie output")
         }
 
         session.commitConfiguration()
-        isSessionConfigured = true
+        captureSession = session
 
-        setupInterruptionObservers()
-        logger.info("🎛 Session configured (res: \(resolution.rawValue), audio:\(audioOn))")
+        // Swift 6 safe – start session on background thread
+        await Task.detached {
+            session.startRunning()
+        }.value
+
+        return true
     }
 
-    // MARK: - Start / Stop recording
+
+    private func bestDevice() -> AVCaptureDevice? {
+        if cameraPosition == .front {
+            return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+        }
+
+        return AVCaptureDevice.default(cameraType.avType, for: .video, position: .back)
+            ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+    }
+
+    // MARK: - Recording
     func startRecording() {
-        guard let session = captureSession,
-              let output = movieOutput else {
-            lastErrorMessage = "Session not ready."
-            return
-        }
+        guard let output = movieOutput else { return }
 
-        if !session.isRunning {
-            DispatchQueue.global(qos: .userInitiated).async {
-                session.startRunning()
-            }
-        }
-
-        // no-op if already rolling
-        if isRecording { return }
-
-        isStoppingForGood = false
-
-        // build fresh file URL
-        let url = getOutputURL()
+        isRecording = true
+        let url = nextURL()
         activeSegmentURL = url
-        if FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.removeItem(at: url)
+        
+        // NEW: Notify safety handler
+        SafeRecordingHandler.shared.startRecordingSession(url: url)
+        
+        // NEW: Check disk space before starting
+        let diskSpace = SafeRecordingHandler.shared.checkDiskSpace()
+        if diskSpace.isLow {
+            print("⚠️ Low disk space: \(diskSpace.available / 1024 / 1024)MB available")
         }
-
-        beginBackgroundTaskIfNeeded()
-        dimScreenForStealth()
 
         output.startRecording(to: url, recordingDelegate: self)
-
-        // UI state
-        isRecording = true
-        currentDuration = 0
-        startDurationTimer()
         startSegmentTimer()
-
-        logger.info("🎥 Started recording: \(url.lastPathComponent)")
     }
 
-    func stopRecording(autoSave: Bool = true) {
-        // idempotent
+    func stopRecording() {
         guard isRecording else { return }
+        isRecording = false
 
-        shouldAutoSave = autoSave
-        isStoppingForGood = true
-
-        stopDurationTimer()
-        stopSegmentTimer()
-
+        segmentTimer?.invalidate()
         movieOutput?.stopRecording()
-        logger.info("🟥 Stop recording called")
-        // We do not set isRecording = false yet.
+        
+        // NEW: Notify safety handler
+        SafeRecordingHandler.shared.endRecordingSession()
     }
 
-    // MARK: - Segment rotation
+    // MARK: - Segmentation
     private func startSegmentTimer() {
-        stopSegmentTimer()
-        segmentTimer = Timer.scheduledTimer(withTimeInterval: segmentDuration, repeats: true) { [weak self] _ in
-            self?.rotateRecordingSegment()
+        segmentTimer?.invalidate()
+
+        segmentTimer = Timer.scheduledTimer(withTimeInterval: segmentLength, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.rotateSegment() }
         }
     }
 
-    private func stopSegmentTimer() {
-        segmentTimer?.invalidate()
-        segmentTimer = nil
-    }
-
-    private func rotateRecordingSegment() {
+    private func rotateSegment() {
         guard isRecording, !isSegmenting else { return }
         isSegmenting = true
-        logger.info("⏸ Rotating segment...")
-
-        // finish current file
         movieOutput?.stopRecording()
-
-        // slight pause for disk flush, then restart if still recording
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            guard self.isRecording, !self.isStoppingForGood else {
-                self.isSegmenting = false
-                return
-            }
-
-            let newURL = self.getOutputURL()
-            self.activeSegmentURL = newURL
-
-            if FileManager.default.fileExists(atPath: newURL.path) {
-                try? FileManager.default.removeItem(at: newURL)
-            }
-
-            if let output = self.movieOutput {
-                output.startRecording(to: newURL, recordingDelegate: self)
-                logger.info("▶️ Started new segment: \(newURL.lastPathComponent)")
-            }
-
-            self.isSegmenting = false
-        }
     }
 
-    // MARK: - Timers
-    private func startDurationTimer() {
-        stopDurationTimer()
-        durationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                self.currentDuration += 0.1
-            }
-        }
+    // MARK: - File Helpers
+    private func nextURL() -> URL {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd-HH-mm-ss"
+        let stamp = df.string(from: Date())
+        let random = String(UUID().uuidString.prefix(6))
+        return directory().appendingPathComponent("\(stamp)-\(random).mov")
     }
 
-    private func stopDurationTimer() {
-        durationTimer?.invalidate()
-        durationTimer = nil
+    private func directory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Videos")
     }
 
-    // MARK: - File helpers
-    private func getOutputURL() -> URL {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd-HH-mm-ss"
-        let stamp = fmt.string(from: Date())
-        let random = UUID().uuidString.prefix(6)
-        let fileName = "TravelVid_\(stamp)_\(random).mov"
-        return getVideoDirectory().appendingPathComponent(fileName)
+    private func createDirectory() {
+        try? FileManager.default.createDirectory(at: directory(), withIntermediateDirectories: true)
     }
 
-    private func getVideoDirectory() -> URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appendingPathComponent("Videos", isDirectory: true)
-    }
+    // MARK: - Load existing
+    private func loadRecordings() async {
+        let fm = FileManager.default
+        let dir = directory()
+        
+        // NEW: Clean up any corrupted files first
+        await SafeRecordingHandler.shared.cleanupCorruptedFiles(in: dir)
 
-    private func createVideoDirectory() {
-        let dir = getVideoDirectory()
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            logger.info("📂 Created video directory at \(dir.path)")
-        }
-    }
-
-    // MARK: - Load recordings
-    private func loadExistingRecordings() async {
-        let dir = getVideoDirectory()
-
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: dir,
-            includingPropertiesForKeys: [.fileSizeKey, .creationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return }
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey, .fileSizeKey])
+        else { return }
 
         var list: [Recording] = []
 
-        for url in files where ["mov", "mp4"].contains(url.pathExtension.lowercased()) {
-            let attr = try? FileManager.default.attributesOfItem(atPath: url.path)
+        for url in files where url.pathExtension.lowercased() == "mov" {
+            // NEW: Verify file integrity before adding to list
+            guard SafeRecordingHandler.shared.verifyFileIntegrity(at: url) else {
+                print("⚠️ Skipping corrupted file: \(url.lastPathComponent)")
+                continue
+            }
+            
+            let attr = try? fm.attributesOfItem(atPath: url.path)
             let size = attr?[.size] as? Int64 ?? 0
             let creation = attr?[.creationDate] as? Date
 
             let asset = AVAsset(url: url)
-            var duration: Double = 0
-            do {
-                if #available(iOS 16.0, *) {
-                    let d = try await asset.load(.duration)
-                    duration = d.seconds
-                } else {
-                    duration = asset.duration.seconds
-                }
-            } catch {}
+            let duration: TimeInterval
 
-            list.append(Recording(
-                name: url.lastPathComponent,
-                duration: duration,
-                size: size,
-                url: url,
-                creationDate: creation
-            ))
-        }
-
-        let sorted = list.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
-        await MainActor.run {
-            self.recordings = sorted
-        }
-    }
-
-    // MARK: - Export / delete
-    func exportToPhotos(_ recording: Recording) {
-        PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: recording.url)
-        } completionHandler: { success, error in
-            if success {
-                logger.info("✅ Exported \(recording.name)")
+            if #available(iOS 16, *) {
+                duration = (try? await asset.load(.duration))?.seconds ?? 0
             } else {
-                Task { @MainActor in
-                    self.lastErrorMessage = "Export failed: \(error?.localizedDescription ?? "")"
-                }
+                duration = asset.duration.seconds
+            }
+
+            list.append(Recording(name: url.lastPathComponent,
+                                  duration: duration,
+                                  size: size,
+                                  url: url,
+                                  creation: creation))
+        }
+
+        recordings = list.sorted { ($0.creation ?? .distantPast) > ($1.creation ?? .distantPast) }
+    }
+
+    // MARK: - Export
+    func exportAll() {
+        for rec in recordings {
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: rec.url)
             }
         }
     }
 
-    func deleteRecording(_ recording: Recording) {
-        try? FileManager.default.removeItem(at: recording.url)
-        recordings.removeAll { $0.id == recording.id }
-        logger.info("🗑 Deleted \(recording.name)")
+    func deleteRecording(_ rec: Recording) {
+        try? FileManager.default.removeItem(at: rec.url)
+        recordings.removeAll { $0.id == rec.id }
     }
-
-    func deleteAllRecordings() {
-        let dir = getVideoDirectory()
-        if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-            for f in files where ["mov", "mp4"].contains(f.pathExtension.lowercased()) {
-                try? FileManager.default.removeItem(at: f)
-            }
-        }
-        recordings.removeAll()
-    }
-
-    // MARK: - Interruption observers
-    private func setupInterruptionObservers() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appDidBecomeActive),
-            name: UIApplication.didBecomeActiveNotification,
-            object: nil
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appWillResignActive),
-            name: UIApplication.willResignActiveNotification,
-            object: nil
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(sessionRuntimeError(_:)),
-            name: .AVCaptureSessionRuntimeError,
-            object: captureSession
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(sessionWasInterrupted(_:)),
-            name: .AVCaptureSessionWasInterrupted,
-            object: captureSession
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(sessionInterruptionEnded(_:)),
-            name: .AVCaptureSessionInterruptionEnded,
-            object: captureSession
-        )
-    }
-
-    @objc private func appDidBecomeActive() {
-        if let s = captureSession, !s.isRunning {
-            DispatchQueue.global(qos: .userInitiated).async {
-                s.startRunning()
-            }
-        }
-    }
-
-    @objc private func appWillResignActive() {
-        if isRecording {
-            stopRecording(autoSave: true)
-        } else {
-            captureSession?.stopRunning()
-        }
-        restoreBrightnessIfNeeded()
-    }
-
-    @objc private func sessionRuntimeError(_ note: Notification) {
-        logger.error("⚠️ AVCaptureSessionRuntimeError")
-        if let s = captureSession {
-            DispatchQueue.global(qos: .userInitiated).async {
-                if !s.isRunning { s.startRunning() }
-            }
-        }
-    }
-
-    @objc private func sessionWasInterrupted(_ note: Notification) {
-        logger.warning("⏸ Session interrupted")
-    }
-
-    @objc private func sessionInterruptionEnded(_ note: Notification) {
-        logger.info("▶️ Session interruption ended")
-        if let s = captureSession, !s.isRunning {
-            DispatchQueue.global(qos: .userInitiated).async {
-                s.startRunning()
-            }
-        }
-    }
-
-    // MARK: - Brightness control
-    private func dimScreenForStealth() {
-        if !brightnessDimmed {
-            originalBrightness = UIScreen.main.brightness
-            UIScreen.main.brightness = 0.3
-            brightnessDimmed = true
-        }
-    }
-
-    private func restoreBrightnessIfNeeded() {
-        if brightnessDimmed {
-            UIScreen.main.brightness = originalBrightness
-            brightnessDimmed = false
-        }
-    }
-
-    // MARK: - Background task helpers
-    private func beginBackgroundTaskIfNeeded() {
-        if backgroundTaskID == .invalid {
-            backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "RecordingBackgroundTask") {
-                UIApplication.shared.endBackgroundTask(self.backgroundTaskID)
-                self.backgroundTaskID = .invalid
-            }
-        }
-    }
-
-    private func endBackgroundTaskIfNeeded() {
-        if backgroundTaskID != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTaskID)
-            backgroundTaskID = .invalid
-        }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 }
 
-// MARK: - AVCaptureFileOutputRecordingDelegate
+// MARK: - Delegate
 extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
     nonisolated func fileOutput(
         _ output: AVCaptureFileOutput,
@@ -586,59 +369,40 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
         from connections: [AVCaptureConnection],
         error: Error?
     ) {
+
         Task { @MainActor in
-            if let error {
-                logger.error("⚠️ Recording delegate error: \(error.localizedDescription)")
-            }
 
-            // metadata for list
             let asset = AVAsset(url: outputFileURL)
+            let duration: TimeInterval
 
-            var duration: Double = 0
-            do {
-                if #available(iOS 16.0, *) {
-                    duration = try await asset.load(.duration).seconds
-                } else {
-                    duration = asset.duration.seconds
-                }
-            } catch {
-                logger.warning("Couldn't load duration for final asset")
+            if #available(iOS 16, *) {
+                duration = (try? await asset.load(.duration))?.seconds ?? 0
+            } else {
+                duration = asset.duration.seconds
             }
 
             let attrs = try? FileManager.default.attributesOfItem(atPath: outputFileURL.path)
-            let size = (attrs?[.size] as? Int64) ?? 0
+            let size = attrs?[.size] as? Int64 ?? 0
             let creation = attrs?[.creationDate] as? Date
 
-            let rec = Recording(
-                name: outputFileURL.lastPathComponent,
-                duration: duration,
-                size: size,
-                url: outputFileURL,
-                creationDate: creation
+            recordings.insert(
+                Recording(name: outputFileURL.lastPathComponent,
+                          duration: duration,
+                          size: size,
+                          url: outputFileURL,
+                          creation: creation),
+                at: 0
             )
 
-            // prepend in UI list
-            self.recordings.insert(rec, at: 0)
-
-            // "segment saved" pulse
-            self.lastSegmentSaved = Date()
-
-            if self.isStoppingForGood {
-                // Full stop path
-                self.isRecording = false
-
-                self.stopDurationTimer()
-                self.stopSegmentTimer()
-
-                self.restoreBrightnessIfNeeded()
-                self.endBackgroundTaskIfNeeded()
+            if self.isRecording {
+                let newURL = self.nextURL()
+                output.startRecording(to: newURL, recordingDelegate: self)
+                self.isSegmenting = false
+                self.activeSegmentURL = newURL
             } else {
-                // Continuing in a new segment --
-                // reset visible timer.
-                self.currentDuration = 0
+                // Recording stopped - end background task immediately
+                SafeRecordingHandler.shared.endRecordingSession()
             }
-
-            logger.info("✅ Finalized segment: \(rec.name)")
         }
     }
 }

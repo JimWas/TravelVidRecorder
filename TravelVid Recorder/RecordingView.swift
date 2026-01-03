@@ -1,230 +1,287 @@
 import SwiftUI
-import UIKit
 
 struct RecordingView: View {
+
     @ObservedObject var manager: RecordingManager
     let coverImage: UIImage?
     @Environment(\.dismiss) private var dismiss
 
-    @State private var dragOffset: CGSize = .zero
-    @State private var showStopOverlay = false
-    @State private var showHint = false
-    @State private var isStopping = false
-    @State private var showFakeStorageAlert = false
+    @State private var showFakePopup = false
+    @State private var tapCounter = 0
+    @State private var cornerTapCounter = 0
+    @State private var lastTapTime = Date()
+    @State private var isHolding = false
+    @State private var holdTimer: Timer?
+    @State private var doubleTapDetected = false
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
 
-            // MARK: - Background
-            if let image = coverImage {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .ignoresSafeArea()
+        ZStack {
+
+            // DISPLAY BASED ON MODE
+            if manager.recordingDisplayMode == .tetris {
+                // Tetris Game
+                TetrisGameView()
+                    .ignoresSafeArea(.all)
             } else {
-                Color.black.ignoresSafeArea()
-            }
-
-            // MARK: - Timer Overlay
-            if manager.isRecording {
-                VStack {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 8, height: 8)
-
-                        Text(timeString(from: manager.currentDuration))
-                            .font(.title3.monospacedDigit())
-                            .bold()
-                            .foregroundColor(.white)
-
-                        Spacer()
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 50)
-
-                    Spacer()
+                // Fullscreen Cover Image
+                if let img = coverImage {
+                    Image(uiImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .ignoresSafeArea(.all)
+                } else {
+                    Color.black.ignoresSafeArea(.all)
                 }
-                .transition(.opacity)
-                .animation(.easeInOut, value: manager.isRecording)
             }
 
-            // MARK: - Hint Overlay
-            if showHint {
-                VStack {
-                    Spacer()
-                    Text("⬇︎ Swipe down, triple tap, or tap top-left to stop")
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 14)
-                        .background(Color.black.opacity(0.4))
-                        .cornerRadius(12)
-                        .shadow(radius: 4)
-                        .transition(.opacity)
-                        .padding(.bottom, 80)
-                }
-                .animation(.easeInOut(duration: 0.5), value: showHint)
-            }
-
-            // MARK: - Stop Overlay
-            if showStopOverlay {
-                VStack {
-                    Text("Recording Stopped")
-                        .font(.headline)
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 20)
-                        .background(Color.black.opacity(0.7))
-                        .cornerRadius(14)
-                        .foregroundColor(.white)
-                        .shadow(radius: 10)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .transition(.scale)
-            }
-
-            // MARK: - Hot Corner to Stop
-            Button {
-                if manager.isRecording { stopFlow() }
-            } label: {
-                Color.clear
-                    .frame(width: 80, height: 80)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 40)
-            .padding(.leading, 10)
-
-            // MARK: - Fake System Alert Overlay
-            if showFakeStorageAlert {
+            // POPUP (only if enabled)
+            if showFakePopup && manager.showFakePopups {
                 Color.black.opacity(0.45)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-                    .onAppear {
-                        let generator = UINotificationFeedbackGenerator()
-                        generator.notificationOccurred(.error)
-                    }
+                    .ignoresSafeArea(.all)
 
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 50))
-                        .foregroundColor(.yellow)
-
-                    Text("iPhone Storage Full")
-                        .font(.title3.bold())
-                        .foregroundColor(.white)
-
-                    Text("You can manage your storage in Settings.")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 220)
-
-                    Button("OK") {
-                        withAnimation(.easeInOut) { showFakeStorageAlert = false }
-                    }
-                    .font(.headline)
-                    .padding(.horizontal, 40)
-                    .padding(.vertical, 10)
-                    .background(Color.white.opacity(0.9))
-                    .foregroundColor(.blue)
-                    .cornerRadius(8)
-                }
-                .padding(30)
-                .background(.ultraThinMaterial)
-                .cornerRadius(20)
-                .shadow(radius: 20)
-                .transition(.scale)
+                fakeAlert
+                    .zIndex(9999)
+            }
+            
+            // Invisible corner tap zones (for corner tap gestures)
+            if manager.stopGesture == .topLeftCorner || manager.stopGesture == .topRightCorner {
+                cornerTapZones
             }
         }
-
-        // MARK: - Gestures
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { value in
-                    if value.translation.height > 80,
-                       abs(value.translation.width) < 60,
-                       manager.isRecording {
-                        stopFlow()
+        .applyStopGestures(manager: manager,
+                          showFakePopup: showFakePopup,
+                          onTap: handleTap,
+                          onStop: stopAndDismiss)
+        .onAppear {
+            _ = HardwareButtonBlocker.shared  // Activate volume blocker
+
+            Task {
+                let ok = await manager.prepareSession()
+                if ok {
+                    manager.startRecording()
+                    if manager.showFakePopups {
+                        showFakePopupsForever()
                     }
                 }
-        )
-        .simultaneousGesture(
-            TapGesture(count: 3)
-                .onEnded { if manager.isRecording { stopFlow() } }
-        )
-
-        // MARK: - Lifecycle
-        .onAppear {
-            provideFeedback(.started)
-            showRecordingHint()
-
-            if !manager.isRecording {
-                manager.startRecording()
-            }
-
-            // Trigger fake alert after short delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                withAnimation(.spring()) { showFakeStorageAlert = true }
             }
         }
         .onDisappear {
+            holdTimer?.invalidate()
             if manager.isRecording {
-                manager.stopRecording(autoSave: true)
+                manager.stopRecording()
             }
         }
-        .onChange(of: manager.isRecording) { newValue in
-            if !newValue {
-                provideFeedback(.stopped)
-                withAnimation(.spring()) { showStopOverlay = false }
-                cleanupAndDismiss()
+    }
+    
+    // MARK: - Corner Tap Zones
+    private var cornerTapZones: some View {
+        ZStack {
+            // Top-left corner
+            if manager.stopGesture == .topLeftCorner {
+                Color.clear
+                    .frame(width: 100, height: 100)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        handleCornerTap()
+                    }
+                    .position(x: 50, y: 50)
+            }
+            
+            // Top-right corner
+            if manager.stopGesture == .topRightCorner {
+                GeometryReader { geo in
+                    Color.clear
+                        .frame(width: 100, height: 100)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            handleCornerTap()
+                        }
+                        .position(x: geo.size.width - 50, y: 50)
+                }
             }
         }
-        .animation(.easeInOut, value: manager.isRecording)
+        .allowsHitTesting(true)
     }
-
-    // MARK: - Stop Flow
-    private func stopFlow() {
-        guard !isStopping else { return }
-        isStopping = true
-
-        withAnimation(.spring()) {
-            showStopOverlay = true
+    
+    // MARK: - Tap Handlers
+    private func handleTap() {
+        let now = Date()
+        
+        // Reset counter if too much time has passed (more than 2 seconds)
+        if now.timeIntervalSince(lastTapTime) > 2.0 {
+            tapCounter = 0
         }
-        provideFeedback(.stopped)
-
-        manager.stopRecording(autoSave: true)
+        
+        lastTapTime = now
+        tapCounter += 1
+        
+        let requiredTaps = manager.stopGesture == .fiveTaps ? 5 : 4
+        
+        if tapCounter >= requiredTaps {
+            tapCounter = 0
+            stopAndDismiss()
+        }
+    }
+    
+    private func handleCornerTap() {
+        let now = Date()
+        
+        // Reset counter if too much time has passed
+        if now.timeIntervalSince(lastTapTime) > 2.0 {
+            cornerTapCounter = 0
+        }
+        
+        lastTapTime = now
+        cornerTapCounter += 1
+        
+        if cornerTapCounter >= 5 {
+            cornerTapCounter = 0
+            stopAndDismiss()
+        }
     }
 
-    private func cleanupAndDismiss() {
-        isStopping = false
+    // MARK: - Popup Loop
+    private func showFakePopupsForever() {
+        // Schedule popups more safely to avoid integer overflow
+        let maxPopups = 1000 // Reasonable limit instead of 9999
+        
+        for i in 0..<maxPopups {
+            let delay = Double(i) * 2.0
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                withAnimation(.spring()) {
+                    self.showFakePopup = true
+                }
+            }
+        }
+    }
+
+    private func stopAndDismiss() {
+        manager.stopRecording()
         dismiss()
     }
 
-    // MARK: - Hint
-    private func showRecordingHint() {
-        withAnimation(.easeInOut(duration: 0.5)) { showHint = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            withAnimation(.easeInOut(duration: 0.5)) { showHint = false }
+    // MARK: - Fake Alert UI
+    private var fakeAlert: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 52))
+                .foregroundColor(.yellow)
+
+            Text("iPhone Storage Full")
+                .font(.title3.bold())
+                .foregroundColor(.white)
+
+            Text("You can manage your storage in Settings.")
+                .foregroundColor(.white.opacity(0.8))
+                .multilineTextAlignment(.center)
+                .frame(width: 240)
+
+            Button("OK") {
+                withAnimation { showFakePopup = false }
+            }
+            .padding(.horizontal, 40)
+            .padding(.vertical, 12)
+            .background(Color.white.opacity(0.95))
+            .foregroundColor(.blue)
+            .cornerRadius(10)
+
+        }
+        .padding(28)
+        .background(.ultraThinMaterial)
+        .cornerRadius(20)
+        .shadow(radius: 25)
+    }
+}
+
+// MARK: - Gesture View Modifier
+struct StopGestureModifier: ViewModifier {
+    @ObservedObject var manager: RecordingManager
+    let showFakePopup: Bool
+    let onTap: () -> Void
+    let onStop: () -> Void
+    
+    func body(content: Content) -> some View {
+        switch manager.stopGesture {
+        case .fourTaps, .fiveTaps:
+            content
+                .simultaneousGesture(
+                    TapGesture(count: 1)
+                        .onEnded { _ in
+                            if !showFakePopup {
+                                onTap()
+                            }
+                        }
+                )
+            
+        case .swipeDown:
+            content
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 50)
+                        .onEnded { value in
+                            if value.translation.height > 100 && abs(value.translation.width) < 50 {
+                                onStop()
+                            }
+                        }
+                )
+            
+        case .swipeLeft:
+            content
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 50)
+                        .onEnded { value in
+                            if value.translation.width < -100 && abs(value.translation.height) < 50 {
+                                onStop()
+                            }
+                        }
+                )
+            
+        case .swipeRight:
+            content
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 50)
+                        .onEnded { value in
+                            if value.translation.width > 100 && abs(value.translation.height) < 50 {
+                                onStop()
+                            }
+                        }
+                )
+            
+        case .topLeftCorner, .topRightCorner:
+            // Corner taps are handled with invisible tap zones
+            content
+            
+        case .doubleTapHold:
+            content
+                .simultaneousGesture(
+                    TapGesture(count: 2)
+                        .onEnded { _ in
+                            // Trigger hold check after double tap
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                // Will check if user is still holding
+                            }
+                        }
+                )
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 2.0)
+                        .onEnded { _ in
+                            onStop()
+                        }
+                )
         }
     }
+}
 
-    // MARK: - Haptics / Util
-    private func provideFeedback(_ type: FeedbackType) {
-        let gen = UINotificationFeedbackGenerator()
-        gen.prepare()
-        switch type {
-        case .started: gen.notificationOccurred(.success)
-        case .stopped: gen.notificationOccurred(.warning)
-        }
+extension View {
+    func applyStopGestures(manager: RecordingManager,
+                          showFakePopup: Bool,
+                          onTap: @escaping () -> Void,
+                          onStop: @escaping () -> Void) -> some View {
+        self.modifier(StopGestureModifier(manager: manager,
+                                         showFakePopup: showFakePopup,
+                                         onTap: onTap,
+                                         onStop: onStop))
     }
-
-    private func timeString(from t: TimeInterval) -> String {
-        let m = Int(t) / 60
-        let s = Int(t) % 60
-        return String(format: "%02d:%02d", m, s)
-    }
-
-    enum FeedbackType { case started, stopped }
 }

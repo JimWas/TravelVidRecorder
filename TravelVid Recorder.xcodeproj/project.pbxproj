@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B142FC21B6264E4595909392 /* Pods_TravelVid_Recorder.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4DFAA9BE89D7249C72C246A1 /* Pods_TravelVid_Recorder.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		04AEABEE2EB1ACF6006FA46D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,12 +28,16 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0492C4222EF5038900A2F2DC /* GPS-TOkyo-Station.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = "GPS-TOkyo-Station.gpx"; path = "../../GPS-TOkyo-Station.gpx"; sourceTree = "<group>"; };
 		04AEABD72EB1ACF3006FA46D /* TravelVid Recorder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TravelVid Recorder.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		04AEABED2EB1ACF6006FA46D /* TravelVid RecorderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "TravelVid RecorderTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		04AEABF72EB1ACF6006FA46D /* TravelVid RecorderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "TravelVid RecorderUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		04E338832EB30B8200E4C187 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.2.sdk/System/Library/Frameworks/AVFoundation.framework; sourceTree = DEVELOPER_DIR; };
 		04E338882EB30B8D00E4C187 /* Photos.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Photos.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.2.sdk/System/Library/Frameworks/Photos.framework; sourceTree = DEVELOPER_DIR; };
 		04E3388C2EB30B9300E4C187 /* PhotosUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PhotosUI.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.2.sdk/System/Library/Frameworks/PhotosUI.framework; sourceTree = DEVELOPER_DIR; };
+		257FD1AFA4E1C42E44256256 /* Pods-TravelVid Recorder.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-TravelVid Recorder.debug.xcconfig"; path = "Target Support Files/Pods-TravelVid Recorder/Pods-TravelVid Recorder.debug.xcconfig"; sourceTree = "<group>"; };
+		4DFAA9BE89D7249C72C246A1 /* Pods_TravelVid_Recorder.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_TravelVid_Recorder.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		895E80D2BF6C74EE0BC6BA4F /* Pods-TravelVid Recorder.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-TravelVid Recorder.release.xcconfig"; path = "Target Support Files/Pods-TravelVid Recorder/Pods-TravelVid Recorder.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -45,6 +53,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B142FC21B6264E4595909392 /* Pods_TravelVid_Recorder.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -68,9 +77,11 @@
 		04AEABCE2EB1ACF3006FA46D = {
 			isa = PBXGroup;
 			children = (
+				0492C4222EF5038900A2F2DC /* GPS-TOkyo-Station.gpx */,
 				04AEABD92EB1ACF3006FA46D /* TravelVid Recorder */,
 				04E338822EB30B8200E4C187 /* Frameworks */,
 				04AEABD82EB1ACF3006FA46D /* Products */,
+				4395DD4DB8FD031AA1149DF7 /* Pods */,
 			);
 			sourceTree = "<group>";
 		};
@@ -90,8 +101,18 @@
 				04E3388C2EB30B9300E4C187 /* PhotosUI.framework */,
 				04E338882EB30B8D00E4C187 /* Photos.framework */,
 				04E338832EB30B8200E4C187 /* AVFoundation.framework */,
+				4DFAA9BE89D7249C72C246A1 /* Pods_TravelVid_Recorder.framework */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		4395DD4DB8FD031AA1149DF7 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				257FD1AFA4E1C42E44256256 /* Pods-TravelVid Recorder.debug.xcconfig */,
+				895E80D2BF6C74EE0BC6BA4F /* Pods-TravelVid Recorder.release.xcconfig */,
+			);
+			path = Pods;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -101,9 +122,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 04AEAC012EB1ACF6006FA46D /* Build configuration list for PBXNativeTarget "TravelVid Recorder" */;
 			buildPhases = (
+				5B7F409A305E28223EEC8BA3 /* [CP] Check Pods Manifest.lock */,
 				04AEABD32EB1ACF3006FA46D /* Sources */,
 				04AEABD42EB1ACF3006FA46D /* Frameworks */,
 				04AEABD52EB1ACF3006FA46D /* Resources */,
+				BC786F564BD592128574C397 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -113,8 +136,6 @@
 				04AEABD92EB1ACF3006FA46D /* TravelVid Recorder */,
 			);
 			name = "TravelVid Recorder";
-			packageProductDependencies = (
-			);
 			productName = "TravelVid Recorder";
 			productReference = 04AEABD72EB1ACF3006FA46D /* TravelVid Recorder.app */;
 			productType = "com.apple.product-type.application";
@@ -133,8 +154,6 @@
 				04AEABEF2EB1ACF6006FA46D /* PBXTargetDependency */,
 			);
 			name = "TravelVid RecorderTests";
-			packageProductDependencies = (
-			);
 			productName = "TravelVid RecorderTests";
 			productReference = 04AEABED2EB1ACF6006FA46D /* TravelVid RecorderTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -153,8 +172,6 @@
 				04AEABF92EB1ACF6006FA46D /* PBXTargetDependency */,
 			);
 			name = "TravelVid RecorderUITests";
-			packageProductDependencies = (
-			);
 			productName = "TravelVid RecorderUITests";
 			productReference = 04AEABF72EB1ACF6006FA46D /* TravelVid RecorderUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -226,6 +243,48 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5B7F409A305E28223EEC8BA3 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-TravelVid Recorder-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		BC786F564BD592128574C397 /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-TravelVid Recorder/Pods-TravelVid Recorder-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-TravelVid Recorder/Pods-TravelVid Recorder-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-TravelVid Recorder/Pods-TravelVid Recorder-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		04AEABD32EB1ACF3006FA46D /* Sources */ = {
@@ -299,10 +358,11 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -360,10 +420,11 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -381,27 +442,32 @@
 		};
 		04AEAC022EB1ACF6006FA46D /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 257FD1AFA4E1C42E44256256 /* Pods-TravelVid Recorder.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "TravelVid Recorder/TravelVid_Recorder.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"TravelVid Recorder/Preview Content\"";
 				DEVELOPMENT_TEAM = VZ6957Q335;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "TravelVid-Recorder-Info.plist";
-				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_CFBundleDisplayName = "TravelVid Recorder";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.travel";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "This app saves videos to your photo library.\n\n\n\n";
-				INFOPLIST_KEY_NSCameraUsageDescription = "This app requires camera access to record videos.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "TravelVid Recorder needs camera access to record video while you travel.";
 				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "This app saves videos to your photo library.\n\n\n\n";
 				INFOPLIST_KEY_NSFileProviderDomainUsageDescription = "This app saves videos to your photo library.\n\n";
 				INFOPLIST_KEY_NSFileProviderPresenceUsageDescription = "This app saves videos to your photo library.\n\n\n\n";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "This app needs microphone access to record audio.\n\n";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "This app saves videos to your photo library.\n\n\n\n";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Save videos to your photo library.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TravelVid Recorder needs microphone access to record audio with your videos.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "TravelVid Recorder needs permission to save videos to your Photos library.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "TravelVid Recorder needs access to save your recorded videos to Photos.";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "This identifier will be used to deliver personalized ads to you.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -416,9 +482,10 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.1;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "JimWas.TravelVid-Recorder";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -431,27 +498,32 @@
 		};
 		04AEAC032EB1ACF6006FA46D /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 895E80D2BF6C74EE0BC6BA4F /* Pods-TravelVid Recorder.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "TravelVid Recorder/TravelVid_Recorder.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"TravelVid Recorder/Preview Content\"";
 				DEVELOPMENT_TEAM = VZ6957Q335;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "TravelVid-Recorder-Info.plist";
-				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_CFBundleDisplayName = "TravelVid Recorder";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.travel";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "This app saves videos to your photo library.\n\n\n\n";
-				INFOPLIST_KEY_NSCameraUsageDescription = "This app requires camera access to record videos.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "TravelVid Recorder needs camera access to record video while you travel.";
 				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "This app saves videos to your photo library.\n\n\n\n";
 				INFOPLIST_KEY_NSFileProviderDomainUsageDescription = "This app saves videos to your photo library.\n\n";
 				INFOPLIST_KEY_NSFileProviderPresenceUsageDescription = "This app saves videos to your photo library.\n\n\n\n";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "This app needs microphone access to record audio.\n\n";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "This app saves videos to your photo library.\n\n\n\n";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Save videos to your photo library.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TravelVid Recorder needs microphone access to record audio with your videos.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "TravelVid Recorder needs permission to save videos to your Photos library.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "TravelVid Recorder needs access to save your recorded videos to Photos.";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "This identifier will be used to deliver personalized ads to you.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -466,9 +538,10 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.1;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "JimWas.TravelVid-Recorder";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -485,6 +558,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = VZ6957Q335;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
@@ -508,6 +582,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = VZ6957Q335;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
@@ -530,6 +605,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = VZ6957Q335;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
@@ -552,6 +628,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = VZ6957Q335;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.2;

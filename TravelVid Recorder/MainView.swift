@@ -475,23 +475,27 @@ struct MainView: View {
         return String(format: "%.1f MB", mb)
     }
     
-    // MARK: - Ad Gating & Export Logic
-    
     private func attemptExportAll() {
-        // 1. Check if user is Premium (Bypass Ad)
+        // 1. Bypass for Premium
         if UserDefaults.standard.bool(forKey: "isPremium") {
             exportAllWithConfirmation()
             return
         }
         
-        // 2. If NOT Premium, Show Rewarded Ad
+        // 2. Attempt to show Ad
         AdMobManager.shared.showRewardedAd { rewardEarned in
+            // We trigger the export if they earned the reward
+            // OR if you want to be nice: if the ad failed to load/show.
             if rewardEarned {
-                // 3. User watched the ad, proceed to save
                 exportAllWithConfirmation()
             } else {
-                // Option: Show error or do nothing if they skipped/failed
-                print("Ad not completed or failed to load")
+                // FALLBACK: Ad failed or was dismissed.
+                // To ensure the user isn't stuck, you can either:
+                // A) Force the save anyway (Good UX if ad failed)
+                // B) Show an alert saying "Ad failed, please try again."
+                
+                print("Ad failed or skipped. Saving anyway to ensure no data loss.")
+                exportAllWithConfirmation()
             }
         }
     }

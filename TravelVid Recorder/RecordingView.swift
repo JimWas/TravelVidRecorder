@@ -19,11 +19,8 @@ struct RecordingView: View {
         ZStack {
 
             // DISPLAY BASED ON MODE
-            if manager.recordingDisplayMode == .tetris {
-                // Tetris Game
-                TetrisGameView()
-                    .ignoresSafeArea(.all)
-            } else {
+            switch manager.recordingDisplayMode {
+            case .coverImage:
                 // Fullscreen Cover Image
                 if let img = coverImage {
                     Image(uiImage: img)
@@ -33,6 +30,16 @@ struct RecordingView: View {
                 } else {
                     Color.black.ignoresSafeArea(.all)
                 }
+                
+            case .tetris:
+                // Tetris Game
+                TetrisGameView()
+                    .ignoresSafeArea(.all)
+                
+            case .flappyBird:
+                // Flappy Bird Game
+                FlappyBirdView()
+                    .ignoresSafeArea(.all)
             }
 
             // POPUP (only if enabled)

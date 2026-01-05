@@ -39,7 +39,7 @@ struct MainView: View {
                         // Header
                         headerView
                         
-                        // Hero Section (Image/Tetris)
+                        // Hero Section (Image/Tetris/FlappyBird)
                         heroPreviewSection
                         
                         // Main Settings Card
@@ -71,12 +71,12 @@ struct MainView: View {
             
             // 1. Export All Alert (With Ad Logic)
             .alert("Export All Videos?", isPresented: $showExportAllAlert) {
-                Button("Watch Ad to Save") {
+                Button("Save") {
                     attemptExportAll()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Watch a short video to save all \(manager.recordings.count) video(s) to your Photos library.")
+                Text("Save all \(manager.recordings.count) video(s) to your Photos library.")
             }
             
             // 2. Export Success
@@ -148,12 +148,14 @@ struct MainView: View {
             Picker("", selection: $manager.recordingDisplayMode) {
                 Text("Cover").tag(RecordingDisplayMode.coverImage)
                 Text("Tetris").tag(RecordingDisplayMode.tetris)
+                Text("Flappy Bird").tag(RecordingDisplayMode.flappyBird)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
             
             ZStack {
-                if manager.recordingDisplayMode == .coverImage {
+                switch manager.recordingDisplayMode {
+                case .coverImage:
                     if let img = coverImage {
                         Image(uiImage: img)
                             .resizable()
@@ -163,8 +165,12 @@ struct MainView: View {
                     } else {
                         placeholderView(icon: "photo", text: "Select Cover Image")
                     }
-                } else {
+                    
+                case .tetris:
                     placeholderView(icon: "gamecontroller.fill", text: "Tetris Mode Active", color: .blue)
+                    
+                case .flappyBird:
+                    placeholderView(icon: "bird.fill", text: "Flappy Bird Mode Active", color: .orange)
                 }
                 
                 // Overlay Button for Image Picker
@@ -220,8 +226,8 @@ struct MainView: View {
                 if manager.cameraPosition == .back {
                     settingsMenu(title: "Lens", icon: "arrow.triangle.2.circlepath.camera") {
                         Picker("Lens", selection: $manager.cameraType) {
-                            Text("Wide").tag(CameraType.wide)
-                            Text("Ultra").tag(CameraType.ultraWide)
+                            Text("Standard").tag(CameraType.wide)
+                            Text("Ultra-Wide").tag(CameraType.ultraWide)
                         }
                     }
                     Spacer()
@@ -534,4 +540,3 @@ struct MainView: View {
         }
     }
 }
-

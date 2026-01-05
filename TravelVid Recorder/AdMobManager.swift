@@ -13,10 +13,10 @@ class AdMobManager: NSObject, ObservableObject {
     
     // 1. Interstitial ID (Pop-up after recording)
     // NOTE: This is still the Google Test ID. Replace with your own "Interstitial" ID from AdMob dashboard.
-    let interstitialID = "ca-app-pub-3057383894764696/5247040863"
+    let interstitialID = "ca-app-pub-3057383894764696/4200169611"
     
     // 2. Rewarded ID (Watch to Save) - YOUR REAL ID
-    let rewardedID     = "ca-app-pub-3057383894764696/5247040863"
+    let rewardedID     = "ca-app-pub-3057383894764696/2451510657"
     
     override init() {
         super.init()

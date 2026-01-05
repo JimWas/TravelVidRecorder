@@ -40,6 +40,11 @@ struct RecordingView: View {
                 // Flappy Bird Game
                 FlappyBirdView()
                     .ignoresSafeArea(.all)
+                
+            case .bitcoin:
+                // Bitcoin Price Tracker
+                BitcoinPriceView()
+                    .ignoresSafeArea(.all)
             }
 
             // POPUP (only if enabled)

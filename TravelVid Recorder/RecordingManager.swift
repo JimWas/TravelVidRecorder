@@ -44,7 +44,8 @@ enum CameraType: String, CaseIterable, Identifiable {
 enum RecordingDisplayMode: String, CaseIterable, Identifiable {
     case coverImage = "Cover Image"
     case tetris = "Tetris"
-    case flappyBird = "Flappy Bird"  // ADDED
+    case flappyBird = "Flappy Bird"
+    case bitcoin = "Bitcoin Price"
     
     var id: String { rawValue }
 }

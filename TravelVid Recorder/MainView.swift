@@ -71,12 +71,12 @@ struct MainView: View {
             
             // 1. Export All Alert (With Ad Logic)
             .alert("Export All Videos?", isPresented: $showExportAllAlert) {
-                Button("Save") {
+                Button("Watch Ad to Save") {
                     attemptExportAll()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Save all \(manager.recordings.count) video(s) to your Photos library.")
+                Text("Watch a short video to save all \(manager.recordings.count) video(s) to your Photos library.")
             }
             
             // 2. Export Success
@@ -145,12 +145,33 @@ struct MainView: View {
     
     private var heroPreviewSection: some View {
         VStack(spacing: 12) {
-            Picker("", selection: $manager.recordingDisplayMode) {
-                Text("Cover").tag(RecordingDisplayMode.coverImage)
-                Text("Tetris").tag(RecordingDisplayMode.tetris)
-                Text("Flappy Bird").tag(RecordingDisplayMode.flappyBird)
+            // Mode picker in a scrollable menu style for 4 options
+            Menu {
+                ForEach(RecordingDisplayMode.allCases) { mode in
+                    Button {
+                        manager.recordingDisplayMode = mode
+                    } label: {
+                        HStack {
+                            Text(mode.rawValue)
+                            if manager.recordingDisplayMode == mode {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack {
+                    Text(manager.recordingDisplayMode.rawValue)
+                        .font(.headline)
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.caption)
+                }
+                .foregroundColor(.primary)
+                .padding()
+                .background(Color(uiColor: .secondarySystemBackground))
+                .cornerRadius(12)
             }
-            .pickerStyle(.segmented)
             .padding(.horizontal)
             
             ZStack {
@@ -171,6 +192,9 @@ struct MainView: View {
                     
                 case .flappyBird:
                     placeholderView(icon: "bird.fill", text: "Flappy Bird Mode Active", color: .orange)
+                    
+                case .bitcoin:
+                    placeholderView(icon: "bitcoinsign.circle.fill", text: "Bitcoin Tracker Active", color: .orange)
                 }
                 
                 // Overlay Button for Image Picker
@@ -226,8 +250,8 @@ struct MainView: View {
                 if manager.cameraPosition == .back {
                     settingsMenu(title: "Lens", icon: "arrow.triangle.2.circlepath.camera") {
                         Picker("Lens", selection: $manager.cameraType) {
-                            Text("Standard").tag(CameraType.wide)
-                            Text("Ultra-Wide").tag(CameraType.ultraWide)
+                            Text("Wide").tag(CameraType.wide)
+                            Text("Ultra").tag(CameraType.ultraWide)
                         }
                     }
                     Spacer()
@@ -489,23 +513,24 @@ struct MainView: View {
         }
         
         // 2. Attempt to show Ad
-        AdMobManager.shared.showRewardedAd { rewardEarned in
-            // We trigger the export if they earned the reward
-            // OR if you want to be nice: if the ad failed to load/show.
-            if rewardEarned {
-                exportAllWithConfirmation()
-            } else {
-                // FALLBACK: Ad failed or was dismissed.
-                // To ensure the user isn't stuck, you can either:
-                // A) Force the save anyway (Good UX if ad failed)
-                // B) Show an alert saying "Ad failed, please try again."
-                
-                print("Ad failed or skipped. Saving anyway to ensure no data loss.")
-                exportAllWithConfirmation()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            AdMobManager.shared.showRewardedAd { rewardEarned in
+                // We trigger the export if they earned the reward
+                // OR if you want to be nice: if the ad failed to load/show.
+                if rewardEarned {
+                    exportAllWithConfirmation()
+                } else {
+                    // FALLBACK: Ad failed or was dismissed.
+                    // To ensure the user isn't stuck, you can either:
+                    // A) Force the save anyway (Good UX if ad failed)
+                    // B) Show an alert saying "Ad failed, please try again."
+                    
+                    print("Ad failed or skipped. Saving anyway to ensure no data loss.")
+                    exportAllWithConfirmation()
+                }
             }
         }
     }
-    
     private func exportAllWithConfirmation() {
         let count = manager.recordings.count
         PHPhotoLibrary.shared().performChanges {

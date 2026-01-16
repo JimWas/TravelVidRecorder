@@ -3,6 +3,7 @@ import AVFoundation
 import Photos
 import UIKit
 import os
+import CoreLocation
 
 @preconcurrency import AVFoundation   // Suppress non-Sendable warnings
 
@@ -43,10 +44,12 @@ enum CameraType: String, CaseIterable, Identifiable {
 // MARK: - RecordingDisplayMode
 enum RecordingDisplayMode: String, CaseIterable, Identifiable {
     case coverImage = "Cover Image"
+    case videoPlayback = "Video Playback"
+    case fakeCall = "Phone Call"
     case tetris = "Tetris"
     case flappyBird = "Flappy Bird"
     case bitcoin = "Bitcoin Price"
-    
+
     var id: String { rawValue }
 }
 
@@ -77,6 +80,13 @@ enum StopRecordingGesture: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Location Data
+struct LocationPoint: Codable {
+    let latitude: Double
+    let longitude: Double
+    let timestamp: Date
+}
+
 // MARK: - Recording Model
 struct Recording: Identifiable {
     let id = UUID()
@@ -85,6 +95,18 @@ struct Recording: Identifiable {
     let size: Int64
     let url: URL
     let creation: Date?
+    let latitude: Double?
+    let longitude: Double?
+    let address: String?
+    let locationPath: [LocationPoint]?
+}
+
+// MARK: - Recording Metadata (for persistence)
+struct RecordingMetadata: Codable {
+    let latitude: Double?
+    let longitude: Double?
+    let address: String?
+    let locationPath: [LocationPoint]?
 }
 
 // MARK: - RecordingManager
@@ -96,7 +118,8 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var segmentLength: TimeInterval = 120
     @Published var selectedResolution: Resolution = .p1080
     @Published var audioOn = true
-    
+    @Published var enableStabilization = false
+
     // NEW: Popup toggle, display mode, and stop gesture
     @Published var showFakePopups = true
     @Published var recordingDisplayMode: RecordingDisplayMode = .coverImage
@@ -104,6 +127,12 @@ class RecordingManager: NSObject, ObservableObject {
 
     @Published var cameraPosition: AVCaptureDevice.Position = .back
     @Published var cameraType: CameraType = .wide
+    @Published var selectedVideoURL: URL?
+    @Published var fakeCallContactName: String = "Customer Service" {
+        didSet {
+            UserDefaults.standard.set(fakeCallContactName, forKey: "fakeCallContactName")
+        }
+    }
 
     private var captureSession: AVCaptureSession?
     private var movieOutput: AVCaptureMovieFileOutput?
@@ -113,12 +142,22 @@ class RecordingManager: NSObject, ObservableObject {
     private var segmentTimer: Timer?
     private var isSegmenting = false
     private var activeSegmentURL: URL?
+    private var recordingLocation: CLLocation?
+    private var recordingPath: [LocationPoint] = []
 
     override init() {
         super.init()
         createDirectory()
         Task { await loadRecordings() }
         setupSafetyNotifications()
+        loadPersistedVideo()
+        loadPersistedSettings()
+    }
+
+    private func loadPersistedSettings() {
+        if let savedContactName = UserDefaults.standard.string(forKey: "fakeCallContactName") {
+            fakeCallContactName = savedContactName
+        }
     }
     
     // MARK: - Safety Notifications (NEW)
@@ -184,27 +223,57 @@ class RecordingManager: NSObject, ObservableObject {
     // MARK: - Session Setup
     func prepareSession() async -> Bool {
         let cam = await requestVideo()
-        if !cam { return false }
+        if !cam {
+            logger.error("Camera permission denied")
+            return false
+        }
 
         let mic = audioOn ? await requestAudio() : true
 
         let session = AVCaptureSession()
         session.beginConfiguration()
-        session.sessionPreset = selectedResolution.preset
+
+        // Try to set the requested preset, fall back to lower resolutions if not supported
+        var presetToUse = selectedResolution.preset
+        if !session.canSetSessionPreset(presetToUse) {
+            logger.warning("Requested preset \(presetToUse.rawValue) not supported, trying fallback")
+            // Try fallback presets in order of preference
+            let fallbacks: [AVCaptureSession.Preset] = [.hd1920x1080, .hd1280x720, .high]
+            presetToUse = fallbacks.first { session.canSetSessionPreset($0) } ?? .high
+        }
+        session.sessionPreset = presetToUse
 
         // Video input
-        guard let vdevice = bestDevice() else { return false }
+        guard let vdevice = bestDevice() else {
+            logger.error("No suitable camera device found")
+            session.commitConfiguration()
+            return false
+        }
+
         do {
             let vInput = try AVCaptureDeviceInput(device: vdevice)
-            if session.canAddInput(vInput) { session.addInput(vInput); videoInput = vInput }
-        } catch { return false }
+            if session.canAddInput(vInput) {
+                session.addInput(vInput)
+                videoInput = vInput
+            } else {
+                logger.error("Cannot add video input to session")
+                session.commitConfiguration()
+                return false
+            }
+        } catch {
+            logger.error("Failed to create video input: \(error.localizedDescription)")
+            session.commitConfiguration()
+            return false
+        }
 
         // Audio input
         if mic, let micDev = AVCaptureDevice.default(for: .audio) {
             do {
                 let aInput = try AVCaptureDeviceInput(device: micDev)
                 if session.canAddInput(aInput) { session.addInput(aInput); audioInput = aInput }
-            } catch {}
+            } catch {
+                logger.warning("Failed to add audio input: \(error.localizedDescription)")
+            }
         }
 
         // Output
@@ -212,15 +281,51 @@ class RecordingManager: NSObject, ObservableObject {
         if session.canAddOutput(movie) {
             session.addOutput(movie)
             movieOutput = movie
+
+            // Enable stabilization if requested
+            if enableStabilization, let connection = movie.connection(with: .video) {
+                if connection.isVideoStabilizationSupported {
+                    connection.preferredVideoStabilizationMode = .standard
+                }
+            }
+        } else {
+            logger.error("Cannot add movie output to session")
+            session.commitConfiguration()
+            return false
         }
 
         session.commitConfiguration()
         captureSession = session
 
-        // Swift 6 safe – start session on background thread
-        await Task.detached {
-            session.startRunning()
-        }.value
+        // Swift 6 safe – start session on background thread with timeout
+        let sessionStarted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            // Use a timeout to prevent hanging indefinitely
+            var didResume = false
+            let timeoutTask = DispatchWorkItem {
+                if !didResume {
+                    didResume = true
+                    logger.error("Session start timed out")
+                    continuation.resume(returning: false)
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeoutTask)
+
+            Task.detached {
+                session.startRunning()
+                DispatchQueue.main.async {
+                    timeoutTask.cancel()
+                    if !didResume {
+                        didResume = true
+                        continuation.resume(returning: session.isRunning)
+                    }
+                }
+            }
+        }
+
+        if !sessionStarted {
+            logger.error("Failed to start capture session")
+            return false
+        }
 
         return true
     }
@@ -242,14 +347,30 @@ class RecordingManager: NSObject, ObservableObject {
         isRecording = true
         let url = nextURL()
         activeSegmentURL = url
-        
+
         // NEW: Notify safety handler
         SafeRecordingHandler.shared.startRecordingSession(url: url)
-        
+
         // NEW: Check disk space before starting
         let diskSpace = SafeRecordingHandler.shared.checkDiskSpace()
         if diskSpace.isLow {
             print("⚠️ Low disk space: \(diskSpace.available / 1024 / 1024)MB available")
+        }
+
+        // Start location tracking
+        LocationManager.shared.startTracking()
+        recordingLocation = LocationManager.shared.currentLocation
+        recordingPath = []
+
+        // Track location updates during recording
+        LocationManager.shared.onLocationUpdate = { [weak self] location in
+            guard let self = self, self.isRecording else { return }
+            let point = LocationPoint(
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude,
+                timestamp: Date()
+            )
+            self.recordingPath.append(point)
         }
 
         output.startRecording(to: url, recordingDelegate: self)
@@ -262,7 +383,11 @@ class RecordingManager: NSObject, ObservableObject {
 
         segmentTimer?.invalidate()
         movieOutput?.stopRecording()
-        
+
+        // Stop location tracking
+        LocationManager.shared.stopTracking()
+        LocationManager.shared.onLocationUpdate = nil
+
         // NEW: Notify safety handler
         SafeRecordingHandler.shared.endRecordingSession()
     }
@@ -301,6 +426,86 @@ class RecordingManager: NSObject, ObservableObject {
         try? FileManager.default.createDirectory(at: directory(), withIntermediateDirectories: true)
     }
 
+    // MARK: - Metadata Persistence
+    private func metadataURL() -> URL {
+        directory().appendingPathComponent("metadata.json")
+    }
+
+    private func loadMetadata() -> [String: RecordingMetadata] {
+        guard let data = try? Data(contentsOf: metadataURL()),
+              let metadata = try? JSONDecoder().decode([String: RecordingMetadata].self, from: data) else {
+            return [:]
+        }
+        return metadata
+    }
+
+    private func saveMetadata(_ metadata: [String: RecordingMetadata]) {
+        guard let data = try? JSONEncoder().encode(metadata) else { return }
+        try? data.write(to: metadataURL())
+    }
+
+    private func saveRecordingMetadata(filename: String, latitude: Double?, longitude: Double?, address: String?, locationPath: [LocationPoint]?) {
+        var metadata = loadMetadata()
+        metadata[filename] = RecordingMetadata(latitude: latitude, longitude: longitude, address: address, locationPath: locationPath)
+        saveMetadata(metadata)
+    }
+
+    private func getRecordingMetadata(filename: String) -> RecordingMetadata? {
+        let metadata = loadMetadata()
+        return metadata[filename]
+    }
+
+    // MARK: - Video Playback Persistence
+    private func videoDirectory() -> URL {
+        directory().appendingPathComponent("SelectedVideos")
+    }
+
+    private func createVideoDirectory() {
+        try? FileManager.default.createDirectory(at: videoDirectory(), withIntermediateDirectories: true)
+    }
+
+    private func loadPersistedVideo() {
+        if let filename = UserDefaults.standard.string(forKey: "selectedVideoFilename"),
+           !filename.isEmpty {
+            let url = videoDirectory().appendingPathComponent(filename)
+            if FileManager.default.fileExists(atPath: url.path) {
+                selectedVideoURL = url
+            } else {
+                // File was deleted, clear the preference
+                UserDefaults.standard.removeObject(forKey: "selectedVideoFilename")
+            }
+        }
+    }
+
+    func saveSelectedVideo(from sourceURL: URL) async throws -> URL {
+        createVideoDirectory()
+
+        // Generate unique filename to avoid conflicts
+        let filename = "selected-video-\(UUID().uuidString).mov"
+        let destURL = videoDirectory().appendingPathComponent(filename)
+
+        // Delete old video if exists
+        if let oldURL = selectedVideoURL {
+            try? FileManager.default.removeItem(at: oldURL)
+        }
+
+        // Copy file to app's directory
+        try FileManager.default.copyItem(at: sourceURL, to: destURL)
+
+        // Save filename to UserDefaults
+        UserDefaults.standard.set(filename, forKey: "selectedVideoFilename")
+
+        return destURL
+    }
+
+    func clearSelectedVideo() {
+        if let url = selectedVideoURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        selectedVideoURL = nil
+        UserDefaults.standard.removeObject(forKey: "selectedVideoFilename")
+    }
+
     // MARK: - Load existing
     private func loadRecordings() async {
         let fm = FileManager.default
@@ -334,11 +539,18 @@ class RecordingManager: NSObject, ObservableObject {
                 duration = asset.duration.seconds
             }
 
+            // Load GPS metadata if available
+            let metadata = getRecordingMetadata(filename: url.lastPathComponent)
+
             list.append(Recording(name: url.lastPathComponent,
                                   duration: duration,
                                   size: size,
                                   url: url,
-                                  creation: creation))
+                                  creation: creation,
+                                  latitude: metadata?.latitude,
+                                  longitude: metadata?.longitude,
+                                  address: metadata?.address,
+                                  locationPath: metadata?.locationPath))
         }
 
         recordings = list.sorted { ($0.creation ?? .distantPast) > ($1.creation ?? .distantPast) }
@@ -347,8 +559,22 @@ class RecordingManager: NSObject, ObservableObject {
     // MARK: - Export
     func exportAll() {
         for rec in recordings {
-            PHPhotoLibrary.shared().performChanges {
-                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: rec.url)
+            exportRecording(rec)
+        }
+    }
+
+    func exportRecording(_ rec: Recording) {
+        PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: rec.url)
+
+            // Embed GPS metadata if available
+            if let lat = rec.latitude, let lon = rec.longitude {
+                request?.location = CLLocation(latitude: lat, longitude: lon)
+            }
+
+            // Set creation date if available
+            if let creation = rec.creation {
+                request?.creationDate = creation
             }
         }
     }
@@ -356,6 +582,11 @@ class RecordingManager: NSObject, ObservableObject {
     func deleteRecording(_ rec: Recording) {
         try? FileManager.default.removeItem(at: rec.url)
         recordings.removeAll { $0.id == rec.id }
+
+        // Clean up metadata
+        var metadata = loadMetadata()
+        metadata.removeValue(forKey: rec.name)
+        saveMetadata(metadata)
     }
     
     deinit {
@@ -387,12 +618,34 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
             let size = attrs?[.size] as? Int64 ?? 0
             let creation = attrs?[.creationDate] as? Date
 
+            // Save location data
+            let latitude = self.recordingLocation?.coordinate.latitude
+            let longitude = self.recordingLocation?.coordinate.longitude
+            let path = self.recordingPath.isEmpty ? nil : self.recordingPath
+
+            // Get address via reverse geocoding
+            var address: String?
+            if let location = self.recordingLocation {
+                address = await LocationManager.shared.getAddress(for: location)
+            }
+
+            // Persist GPS metadata to disk
+            self.saveRecordingMetadata(filename: outputFileURL.lastPathComponent,
+                                       latitude: latitude,
+                                       longitude: longitude,
+                                       address: address,
+                                       locationPath: path)
+
             recordings.insert(
                 Recording(name: outputFileURL.lastPathComponent,
                           duration: duration,
                           size: size,
                           url: outputFileURL,
-                          creation: creation),
+                          creation: creation,
+                          latitude: latitude,
+                          longitude: longitude,
+                          address: address,
+                          locationPath: path),
                 at: 0
             )
 

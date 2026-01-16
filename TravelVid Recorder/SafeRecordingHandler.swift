@@ -155,36 +155,53 @@ class SafeRecordingHandler: NSObject {
     }
     
     // MARK: - Safe File Operations
+
+    /// Synchronous file integrity check - only checks file size and basic attributes
+    /// Use this for quick checks that won't block the main thread
     func verifyFileIntegrity(at url: URL) -> Bool {
         // Check if file exists and is readable
         guard FileManager.default.fileExists(atPath: url.path) else {
             return false
         }
-        
+
+        // Quick check: verify file has reasonable size (more than 1KB)
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attrs[.size] as? Int64 {
+            return size > 1024
+        }
+
+        return false
+    }
+
+    /// Async file integrity check - thoroughly verifies the file is playable
+    /// This should be used when you can await the result
+    func verifyFileIntegrityAsync(at url: URL) async -> Bool {
+        // Check if file exists and is readable
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return false
+        }
+
+        // Quick size check first
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attrs[.size] as? Int64,
+           size < 1024 {
+            return false
+        }
+
         // Try to load the file as an asset to verify it's not corrupted
         let asset = AVAsset(url: url)
-        
+
         // Check if asset is playable
         if #available(iOS 16.0, *) {
-            // Use async load for iOS 16+
-            let semaphore = DispatchSemaphore(value: 0)
-            var isPlayable = false
-            
-            Task {
-                isPlayable = (try? await asset.load(.isPlayable)) ?? false
-                semaphore.signal()
-            }
-            
-            semaphore.wait()
-            return isPlayable
+            return (try? await asset.load(.isPlayable)) ?? false
         } else {
             return asset.duration.seconds > 0
         }
     }
-    
+
     func cleanupCorruptedFiles(in directory: URL) async {
         let fileManager = FileManager.default
-        
+
         guard let files = try? fileManager.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.fileSizeKey],
@@ -192,7 +209,7 @@ class SafeRecordingHandler: NSObject {
         ) else {
             return
         }
-        
+
         for file in files where file.pathExtension.lowercased() == "mov" {
             // Check file size - if it's very small, it's likely corrupted
             if let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
@@ -201,9 +218,10 @@ class SafeRecordingHandler: NSObject {
                 try? fileManager.removeItem(at: file)
                 continue
             }
-            
-            // Verify file integrity
-            if !verifyFileIntegrity(at: file) {
+
+            // Verify file integrity asynchronously (no deadlock risk)
+            let isValid = await verifyFileIntegrityAsync(at: file)
+            if !isValid {
                 print("🗑️ Removing unplayable file: \(file.lastPathComponent)")
                 try? fileManager.removeItem(at: file)
             }

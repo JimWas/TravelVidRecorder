@@ -1,4 +1,5 @@
 import SwiftUI
+import AVKit
 
 struct RecordingView: View {
 
@@ -13,6 +14,8 @@ struct RecordingView: View {
     @State private var isHolding = false
     @State private var holdTimer: Timer?
     @State private var doubleTapDetected = false
+    @State private var sessionFailed = false
+    @State private var isPreparingSession = true
 
     var body: some View {
 
@@ -30,17 +33,30 @@ struct RecordingView: View {
                 } else {
                     Color.black.ignoresSafeArea(.all)
                 }
-                
+
+            case .videoPlayback:
+                // Looping Video Playback
+                if let videoURL = manager.selectedVideoURL {
+                    LoopingVideoPlayerView(videoURL: videoURL)
+                } else {
+                    Color.black.ignoresSafeArea(.all)
+                }
+
+            case .fakeCall:
+                // Phone Call Screen
+                FakeCallingView(contactName: manager.fakeCallContactName)
+                    .ignoresSafeArea(.all)
+
             case .tetris:
                 // Tetris Game
                 TetrisGameView()
                     .ignoresSafeArea(.all)
-                
+
             case .flappyBird:
                 // Flappy Bird Game
                 FlappyBirdView()
                     .ignoresSafeArea(.all)
-                
+
             case .bitcoin:
                 // Bitcoin Price Tracker
                 BitcoinPriceView()
@@ -60,6 +76,66 @@ struct RecordingView: View {
             if manager.stopGesture == .topLeftCorner || manager.stopGesture == .topRightCorner {
                 cornerTapZones
             }
+
+            // MANDATORY RECORDING INDICATOR (Required by Apple Guideline 2.5.14)
+            // This indicator CANNOT be disabled and must clearly show video & audio recording
+            // Positioned prominently and always visible above all other content
+            if !sessionFailed && !isPreparingSession {
+                VStack {
+                    HStack {
+                        Spacer()
+                        recordingIndicator
+                            .padding(.top, 60)
+                            .padding(.trailing, 16)
+                    }
+                    Spacer()
+                }
+                .zIndex(10000) // Ensure indicator is always on top
+            }
+
+            // Loading indicator while preparing session
+            if isPreparingSession {
+                Color.black.opacity(0.7)
+                    .ignoresSafeArea()
+                VStack(spacing: 20) {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                        .tint(.white)
+                    Text("Preparing Camera...")
+                        .foregroundColor(.white)
+                        .font(.headline)
+                }
+                .zIndex(10001)
+            }
+
+            // Error message if session failed
+            if sessionFailed {
+                Color.black.opacity(0.85)
+                    .ignoresSafeArea()
+                VStack(spacing: 20) {
+                    Image(systemName: "video.slash.fill")
+                        .font(.system(size: 60))
+                        .foregroundColor(.red)
+                    Text("Camera Unavailable")
+                        .font(.title2.bold())
+                        .foregroundColor(.white)
+                    Text("Unable to access the camera. Please check your permissions in Settings.")
+                        .font(.body)
+                        .foregroundColor(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                    Button("Go Back") {
+                        dismiss()
+                    }
+                    .padding(.horizontal, 40)
+                    .padding(.vertical, 12)
+                    .background(Color.white)
+                    .foregroundColor(.blue)
+                    .cornerRadius(10)
+                    .padding(.top, 10)
+                }
+                .zIndex(10001)
+            }
         }
         .contentShape(Rectangle())
         .applyStopGestures(manager: manager,
@@ -70,11 +146,22 @@ struct RecordingView: View {
             _ = HardwareButtonBlocker.shared  // Activate volume blocker
 
             Task {
+                isPreparingSession = true
+                sessionFailed = false
+
                 let ok = await manager.prepareSession()
-                if ok {
-                    manager.startRecording()
-                    if manager.showFakePopups {
-                        showFakePopupsForever()
+
+                await MainActor.run {
+                    isPreparingSession = false
+
+                    if ok {
+                        manager.startRecording()
+                        if manager.showFakePopups {
+                            showFakePopupsForever()
+                        }
+                    } else {
+                        // Session preparation failed - show error
+                        sessionFailed = true
                     }
                 }
             }
@@ -87,6 +174,58 @@ struct RecordingView: View {
         }
     }
     
+    // MARK: - Recording Indicator (Required by Apple App Store Guideline 2.5.14)
+    // This indicator MUST be visible at all times during recording
+    // It clearly shows BOTH video AND audio are being recorded
+    @State private var indicatorPulse = false
+
+    private var recordingIndicator: some View {
+        HStack(spacing: 10) {
+            // Animated pulsing red dot
+            Circle()
+                .fill(Color.red)
+                .frame(width: 16, height: 16)
+                .overlay(
+                    Circle()
+                        .stroke(Color.red, lineWidth: 3)
+                        .scaleEffect(indicatorPulse ? 2.0 : 1.0)
+                        .opacity(indicatorPulse ? 0 : 0.8)
+                        .animation(
+                            .easeOut(duration: 1.0).repeatForever(autoreverses: false),
+                            value: indicatorPulse
+                        )
+                )
+
+            // Video recording icon
+            Image(systemName: "video.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+
+            // Audio recording icon
+            Image(systemName: "mic.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+
+            Text("REC")
+                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(
+            Capsule()
+                .fill(Color.red.opacity(0.85))
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.6), radius: 6, x: 0, y: 3)
+        .onAppear {
+            indicatorPulse = true
+        }
+    }
+
     // MARK: - Corner Tap Zones
     private var cornerTapZones: some View {
         ZStack {
@@ -172,10 +311,15 @@ struct RecordingView: View {
 
     private func stopAndDismiss() {
         manager.stopRecording()
-        dismiss()
+
+        // Show interstitial ad after recording ends
+        AdMobManager.shared.showInterstitialAd {
+            // After ad is dismissed (or failed), dismiss the recording view
+            dismiss()
+        }
     }
 
-    // MARK: - Fake Alert UI
+    // MARK: - Storage Alert UI
     private var fakeAlert: some View {
         VStack(spacing: 14) {
             Image(systemName: "exclamationmark.triangle.fill")

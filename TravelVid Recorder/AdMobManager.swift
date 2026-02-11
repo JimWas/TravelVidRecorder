@@ -132,21 +132,10 @@ extension AdMobManager: FullScreenContentDelegate {
     }
 
     func ad(_ ad: FullScreenPresentingAd, didFailToPresentFullScreenContentWithError error: Error) {
+        print("Ad failed to present: \(error.localizedDescription)")
         if ad is InterstitialAd {
             interstitialCompletion?()
             interstitialCompletion = nil
-            loadInterstitial()
-        } else if ad is RewardedAd {
-            rewardedAdCompletion?(false)
-            rewardedAdCompletion = nil
-            didEarnReward = false
-            loadRewardedAd()
-        }
-    }
-
-    func ad(_ ad: FullScreenPresentingAd, didFailToPresentFullScreenContentWithError error: Error) {
-        print("Ad failed to present: \(error.localizedDescription)")
-        if ad is InterstitialAd {
             loadInterstitial()
         } else if ad is RewardedAd {
             // Call stored completion with false since ad failed to show

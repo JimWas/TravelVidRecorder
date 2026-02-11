@@ -1,97 +1,43 @@
-🎥 TravelVid Recorder
-A stealth video recorder for travelers designed to deter theft while capturing footage on the go.
-Overview
-TravelVid Recorder is an iOS app that records video in the background while displaying a decoy interface (cover image or playable Tetris game) to prevent thieves from knowing they're being recorded. Perfect for travel vlogging, security, or discreet documentation.
-✨ Key Features
-🎮 Dual Recording Modes
+# TravelVid Recorder
+Discreet, reliable video capture for travelers who want peace of mind.
 
-Cover Image Mode: Display a static image while recording
-Tetris Game Mode: Play a fully functional Tetris game during recording
+**TravelVid Recorder** records video while showing a decoy screen, helping you document your surroundings without drawing attention. It’s built for travel safety, personal security, and low‑friction capture when you want to stay focused on what matters.
 
-🔒 Anti-Theft Protection
+**Get it on the iOS App Store**  
+Purchase the premium experience directly in the app to unlock all decoy modes and advanced features.
 
-Fake "Storage Full" popups to deter device theft
-Hardware volume button blocking during recording
-Customizable stop gestures (swipes, corner taps, multi-tap)
-Hidden recording interface - thieves won't know they're being filmed
+## Why Travelers Choose TravelVid Recorder
+- **Stealth recording** with believable decoy screens
+- **Reliable capture** even during interruptions
+- **Fast recovery** with safe file handling
+- **Simple export** to your Photos library
 
-📹 Advanced Recording
+## Standout Features
+- **Decoy modes**: Cover Image, Fake Call, Tetris, Flappy Bird, Bitcoin Tracker, Calculator
+- **Anti‑theft UX**: Fake “Storage Full” popups, hidden controls, customizable stop gestures
+- **Pro‑grade recording**: 720p / 1080p / 4K, front/back camera, ultra‑wide lens support
+- **Safety & durability**: Auto‑segmentation, disk‑space monitoring, watchdog checks
+- **Location tagging**: Optional GPS capture with map preview
 
-Auto-segmentation (1-10 minute chunks)
-Multiple resolution options (720p, 1080p, 4K)
-Front/back camera support with ultra-wide lens option
-Audio recording toggle
-Safe file handling prevents corruption on app interruption
+## Who It’s For
+- Travelers who want discreet documentation
+- Vloggers capturing B‑roll without looking like they’re filming
+- Personal security use in public spaces
 
-🛡️ Crash Protection
+## Compatibility
+- iOS 15.0+
+- Camera, microphone, and Photos permissions required
+- Location access optional (for GPS tagging)
 
-Automatic video saving when app is force-closed
-Background task management for safe recording
-Corrupted file detection and cleanup
-Disk space monitoring
+## Legal & Ethical Use
+TravelVid Recorder is intended for lawful, personal‑safety use. Always follow local laws and obtain consent where required.
 
-📱 Recording Management
+## Build From Source
+1. Clone the repo
+2. Open `TravelVid Recorder.xcworkspace`
+3. Configure signing & capabilities
+4. Enable Background Modes → Audio, AirPlay, Picture in Picture
+5. Build and run on a physical device
 
-Batch export to Photos library with confirmation
-Batch delete with selection mode
-File size and duration display
-Automatic chronological sorting
-
-🎯 Use Cases
-
-Travel Safety: Record surroundings without drawing attention
-Vlogging: Capture B-roll while appearing to do something else
-Security: Discreet recording in public spaces
-Documentation: Record interactions while maintaining casual appearance
-
-🎮 Tetris Features
-
-Classic gameplay with 7 piece types
-Score and level progression
-Hard drop button for quick placement
-Pause functionality
-Wall kick rotation system
-Optimized for iPhone screens
-
-🔧 Technical Highlights
-
-Built with SwiftUI and AVFoundation
-Background audio mode for uninterrupted recording
-Swift 6 concurrency compliance
-iOS 15+ compatible
-Proper main actor isolation
-Memory-efficient popup scheduling
-
-📋 Requirements
-
-iOS 15.0+
-Camera and microphone permissions
-Photo library access for exports
-~500MB free storage recommended
-
-⚙️ Configuration
-The app includes customizable settings:
-
-Camera position (front/back)
-Lens type (wide/ultra-wide)
-Recording resolution
-Segment duration
-Stop gesture type
-Fake popup toggle
-
-🚀 Installation
-
-Clone the repository
-Open TravelVid Recorder.xcodeproj in Xcode
-Configure signing & capabilities
-Enable "Background Modes" → "Audio, AirPlay, and Picture in Picture"
-Build and run on device
-
-⚠️ Disclaimer
-This app is designed for personal security and legitimate recording purposes. Users are responsible for complying with local laws regarding recording and consent. The developers assume no liability for misuse.
-📄 License
-[Your chosen license here]
-🤝 Contributing
-Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
-
-Built for travelers who want to stay safe and capture their adventures without drawing unwanted attention. 🌍✈️
+## Support
+If you have issues or feature requests, open a GitHub issue. We welcome thoughtful contributions.

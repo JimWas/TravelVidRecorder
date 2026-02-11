@@ -502,9 +502,9 @@ struct MainView: View {
                             .foregroundColor(.red)
                             .frame(width: 28)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Recording Indicator")
+                            Text("Status Indicator")
                                 .font(.subheadline.weight(.semibold))
-                            Text("Show a visible indicator while recording.")
+                            Text("Show a visible status indicator while recording.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

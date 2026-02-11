@@ -364,63 +364,76 @@ struct StopGestureModifier: ViewModifier {
     let onStop: () -> Void
     
     func body(content: Content) -> some View {
+        // When fake popup is shown, do not intercept taps/gestures so the alert can be dismissed.
+        if showFakePopup {
+            return AnyView(content)
+        }
+
         switch manager.stopGesture {
         case .fourTaps, .fiveTaps:
-            content
-                .highPriorityGesture(
-                    TapGesture(count: 1)
-                        .onEnded { _ in
-                            if !showFakePopup {
+            return AnyView(
+                content
+                    .highPriorityGesture(
+                        TapGesture(count: 1)
+                            .onEnded { _ in
                                 onTap()
                             }
-                        }
-                )
+                    )
+            )
             
         case .swipeDown:
-            content
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 50)
-                        .onEnded { value in
-                            if value.translation.height > 100 && abs(value.translation.width) < 50 {
-                                onStop()
+            return AnyView(
+                content
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 50)
+                            .onEnded { value in
+                                if value.translation.height > 100 && abs(value.translation.width) < 50 {
+                                    onStop()
+                                }
                             }
-                        }
-                )
+                    )
+            )
             
         case .swipeLeft:
-            content
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 50)
-                        .onEnded { value in
-                            if value.translation.width < -100 && abs(value.translation.height) < 50 {
-                                onStop()
+            return AnyView(
+                content
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 50)
+                            .onEnded { value in
+                                if value.translation.width < -100 && abs(value.translation.height) < 50 {
+                                    onStop()
+                                }
                             }
-                        }
-                )
+                    )
+            )
             
         case .swipeRight:
-            content
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 50)
-                        .onEnded { value in
-                            if value.translation.width > 100 && abs(value.translation.height) < 50 {
-                                onStop()
+            return AnyView(
+                content
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 50)
+                            .onEnded { value in
+                                if value.translation.width > 100 && abs(value.translation.height) < 50 {
+                                    onStop()
+                                }
                             }
-                        }
-                )
+                    )
+            )
             
         case .topLeftCorner, .topRightCorner:
             // Corner taps are handled with invisible tap zones
-            content
+            return AnyView(content)
             
         case .doubleTapHold:
-            content
-                .highPriorityGesture(
-                    LongPressGesture(minimumDuration: Double(manager.holdDuration))
-                        .onEnded { _ in
-                            onStop()
-                        }
-                )
+            return AnyView(
+                content
+                    .highPriorityGesture(
+                        LongPressGesture(minimumDuration: Double(manager.holdDuration))
+                            .onEnded { _ in
+                                onStop()
+                            }
+                    )
+            )
         }
     }
 }

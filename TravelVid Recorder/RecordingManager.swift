@@ -352,7 +352,11 @@ class RecordingManager: NSObject, ObservableObject {
                 rotateSegment()
             }
         case .sensitiveContentMitigationActivated:
-            <#code#>
+            print("⚠️ Sensitive content mitigation activated - camera output may be limited")
+            if isRecording && !isSegmenting {
+                print("📼 Saving segment due to sensitive content mitigation")
+                rotateSegment()
+            }
         @unknown default:
             print("❓ Unknown interruption reason")
         }

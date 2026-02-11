@@ -69,7 +69,8 @@ struct RecordingView: View {
             }
 
             // POPUP (only if enabled)
-            if showFakePopup && manager.showFakePopups {
+            let popupVisible = showFakePopup && manager.showFakePopups
+            if popupVisible {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea(.all)
 
@@ -83,7 +84,7 @@ struct RecordingView: View {
             }
 
             // Fullscreen gesture capture layer (disabled when popup is shown)
-            if !showFakePopup {
+            if !popupVisible {
                 stopGestureOverlay
                     .ignoresSafeArea()
                     .zIndex(9998)
@@ -172,6 +173,11 @@ struct RecordingView: View {
                         sessionFailed = true
                     }
                 }
+            }
+        }
+        .onChange(of: manager.showFakePopups) {
+            if !manager.showFakePopups {
+                showFakePopup = false
             }
         }
         .onDisappear {
@@ -309,6 +315,7 @@ struct RecordingView: View {
             let delay = Double(i) * 2.0
             
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard manager.showFakePopups else { return }
                 withAnimation(.spring()) {
                     self.showFakePopup = true
                 }

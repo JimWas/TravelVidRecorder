@@ -12,6 +12,7 @@ class AdMobManager: NSObject, ObservableObject {
     // Track pending completion handler for rewarded ads
     private var rewardedAdCompletion: ((Bool) -> Void)?
     private var didEarnReward = false
+    private var interstitialCompletion: (() -> Void)?
 
     // MARK: - Ad Unit IDs
     let interstitialID = "ca-app-pub-3057383894764696/4200169611"
@@ -45,15 +46,20 @@ class AdMobManager: NSObject, ObservableObject {
         }
     }
     
-    func showInterstitialAd() {
-        guard let root = rootVC else { return }
+    func showInterstitialAd(completion: @escaping () -> Void) {
+        guard let root = rootVC else {
+            completion()
+            return
+        }
         
         if let ad = interstitial {
+            interstitialCompletion = completion
             // New signature: from:
             ad.present(from: root)
         } else {
             print("Interstitial ad wasn't ready.")
             loadInterstitial()
+            completion()
         }
     }
     
@@ -109,6 +115,8 @@ extension AdMobManager: FullScreenContentDelegate {
 
     func adDidDismissFullScreenContent(_ ad: FullScreenPresentingAd) {
         if ad is InterstitialAd {
+            interstitialCompletion?()
+            interstitialCompletion = nil
             loadInterstitial()
         } else if ad is RewardedAd {
             // Call stored completion with reward status, then reload

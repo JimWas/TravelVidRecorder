@@ -82,6 +82,12 @@ struct RecordingView: View {
                 cornerTapZones
             }
 
+            // Fullscreen gesture capture layer (disabled when popup is shown)
+            if !showFakePopup {
+                stopGestureOverlay
+                    .ignoresSafeArea()
+            }
+
             // Recording indicator (optional, controlled in Advanced Settings)
             // Positioned prominently and always visible above all other content
             if manager.showRecordingIndicator && !sessionFailed && !isPreparingSession {
@@ -143,10 +149,6 @@ struct RecordingView: View {
             }
         }
         .contentShape(Rectangle())
-        .applyStopGestures(manager: manager,
-                          showFakePopup: showFakePopup,
-                          onTap: handleTap,
-                          onStop: stopAndDismiss)
         .onAppear {
             _ = HardwareButtonBlocker.shared  // Activate volume blocker
 
@@ -323,6 +325,63 @@ struct RecordingView: View {
         }
     }
 
+    // MARK: - Gesture Overlay
+    @ViewBuilder
+    private var stopGestureOverlay: some View {
+        let base = Color.clear.contentShape(Rectangle())
+
+        switch manager.stopGesture {
+        case .fourTaps, .fiveTaps:
+            base
+                .highPriorityGesture(
+                    TapGesture(count: 1)
+                        .onEnded { _ in
+                            handleTap()
+                        }
+                )
+        case .swipeDown:
+            base
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 50)
+                        .onEnded { value in
+                            if value.translation.height > 100 && abs(value.translation.width) < 50 {
+                                stopAndDismiss()
+                            }
+                        }
+                )
+        case .swipeLeft:
+            base
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 50)
+                        .onEnded { value in
+                            if value.translation.width < -100 && abs(value.translation.height) < 50 {
+                                stopAndDismiss()
+                            }
+                        }
+                )
+        case .swipeRight:
+            base
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 50)
+                        .onEnded { value in
+                            if value.translation.width > 100 && abs(value.translation.height) < 50 {
+                                stopAndDismiss()
+                            }
+                        }
+                )
+        case .topLeftCorner, .topRightCorner:
+            base
+        case .doubleTapHold:
+            base
+                .highPriorityGesture(
+                    LongPressGesture(minimumDuration: Double(manager.holdDuration))
+                        .onEnded { _ in
+                            stopAndDismiss()
+                        }
+                )
+        }
+    }
+
     // MARK: - Storage Alert UI
     private var fakeAlert: some View {
         VStack(spacing: 14) {
@@ -353,99 +412,5 @@ struct RecordingView: View {
         .background(.ultraThinMaterial)
         .cornerRadius(20)
         .shadow(radius: 25)
-    }
-}
-
-// MARK: - Gesture View Modifier
-struct StopGestureModifier: ViewModifier {
-    @ObservedObject var manager: RecordingManager
-    let showFakePopup: Bool
-    let onTap: () -> Void
-    let onStop: () -> Void
-    
-    func body(content: Content) -> some View {
-        // When fake popup is shown, do not intercept taps/gestures so the alert can be dismissed.
-        if showFakePopup {
-            return AnyView(content)
-        }
-
-        switch manager.stopGesture {
-        case .fourTaps, .fiveTaps:
-            return AnyView(
-                content
-                    .highPriorityGesture(
-                        TapGesture(count: 1)
-                            .onEnded { _ in
-                                onTap()
-                            }
-                    )
-            )
-            
-        case .swipeDown:
-            return AnyView(
-                content
-                    .highPriorityGesture(
-                        DragGesture(minimumDistance: 50)
-                            .onEnded { value in
-                                if value.translation.height > 100 && abs(value.translation.width) < 50 {
-                                    onStop()
-                                }
-                            }
-                    )
-            )
-            
-        case .swipeLeft:
-            return AnyView(
-                content
-                    .highPriorityGesture(
-                        DragGesture(minimumDistance: 50)
-                            .onEnded { value in
-                                if value.translation.width < -100 && abs(value.translation.height) < 50 {
-                                    onStop()
-                                }
-                            }
-                    )
-            )
-            
-        case .swipeRight:
-            return AnyView(
-                content
-                    .highPriorityGesture(
-                        DragGesture(minimumDistance: 50)
-                            .onEnded { value in
-                                if value.translation.width > 100 && abs(value.translation.height) < 50 {
-                                    onStop()
-                                }
-                            }
-                    )
-            )
-            
-        case .topLeftCorner, .topRightCorner:
-            // Corner taps are handled with invisible tap zones
-            return AnyView(content)
-            
-        case .doubleTapHold:
-            return AnyView(
-                content
-                    .highPriorityGesture(
-                        LongPressGesture(minimumDuration: Double(manager.holdDuration))
-                            .onEnded { _ in
-                                onStop()
-                            }
-                    )
-            )
-        }
-    }
-}
-
-extension View {
-    func applyStopGestures(manager: RecordingManager,
-                          showFakePopup: Bool,
-                          onTap: @escaping () -> Void,
-                          onStop: @escaping () -> Void) -> some View {
-        self.modifier(StopGestureModifier(manager: manager,
-                                         showFakePopup: showFakePopup,
-                                         onTap: onTap,
-                                         onStop: onStop))
     }
 }

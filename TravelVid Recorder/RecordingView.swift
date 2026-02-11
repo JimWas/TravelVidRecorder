@@ -86,6 +86,7 @@ struct RecordingView: View {
             if !showFakePopup {
                 stopGestureOverlay
                     .ignoresSafeArea()
+                    .zIndex(9998)
             }
 
             // Recording indicator (optional, controlled in Advanced Settings)
@@ -328,12 +329,15 @@ struct RecordingView: View {
     // MARK: - Gesture Overlay
     @ViewBuilder
     private var stopGestureOverlay: some View {
-        let base = Color.clear.contentShape(Rectangle())
+        let base = Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .allowsHitTesting(true)
 
         switch manager.stopGesture {
         case .fourTaps, .fiveTaps:
             base
-                .highPriorityGesture(
+                .gesture(
                     TapGesture(count: 1)
                         .onEnded { _ in
                             handleTap()
@@ -341,7 +345,7 @@ struct RecordingView: View {
                 )
         case .swipeDown:
             base
-                .highPriorityGesture(
+                .gesture(
                     DragGesture(minimumDistance: 50)
                         .onEnded { value in
                             if value.translation.height > 100 && abs(value.translation.width) < 50 {
@@ -351,7 +355,7 @@ struct RecordingView: View {
                 )
         case .swipeLeft:
             base
-                .highPriorityGesture(
+                .gesture(
                     DragGesture(minimumDistance: 50)
                         .onEnded { value in
                             if value.translation.width < -100 && abs(value.translation.height) < 50 {
@@ -361,7 +365,7 @@ struct RecordingView: View {
                 )
         case .swipeRight:
             base
-                .highPriorityGesture(
+                .gesture(
                     DragGesture(minimumDistance: 50)
                         .onEnded { value in
                             if value.translation.width > 100 && abs(value.translation.height) < 50 {
@@ -370,10 +374,10 @@ struct RecordingView: View {
                         }
                 )
         case .topLeftCorner, .topRightCorner:
-            base
+            EmptyView()
         case .doubleTapHold:
             base
-                .highPriorityGesture(
+                .gesture(
                     LongPressGesture(minimumDuration: Double(manager.holdDuration))
                         .onEnded { _ in
                             stopAndDismiss()

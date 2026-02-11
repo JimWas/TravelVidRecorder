@@ -155,19 +155,19 @@ struct MainView: View {
             }
         }
         // Reconfigure capture session when settings change (if not recording)
-        .onChange(of: manager.cameraPosition) { _ in
+        .onChange(of: manager.cameraPosition) {
             Task { await manager.reconfigureSessionIfNeeded() }
         }
-        .onChange(of: manager.cameraType) { _ in
+        .onChange(of: manager.cameraType) {
             Task { await manager.reconfigureSessionIfNeeded() }
         }
-        .onChange(of: manager.selectedResolution) { _ in
+        .onChange(of: manager.selectedResolution) {
             Task { await manager.reconfigureSessionIfNeeded() }
         }
-        .onChange(of: manager.audioOn) { _ in
+        .onChange(of: manager.audioOn) {
             Task { await manager.reconfigureSessionIfNeeded() }
         }
-        .onChange(of: manager.enableStabilization) { _ in
+        .onChange(of: manager.enableStabilization) {
             Task { await manager.reconfigureSessionIfNeeded() }
         }
         // Load Video Task

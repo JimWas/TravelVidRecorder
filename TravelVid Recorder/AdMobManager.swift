@@ -51,6 +51,10 @@ class AdMobManager: NSObject, ObservableObject {
             completion()
             return
         }
+        if root.presentedViewController != nil {
+            completion()
+            return
+        }
         
         if let ad = interstitial {
             interstitialCompletion = completion
@@ -121,6 +125,19 @@ extension AdMobManager: FullScreenContentDelegate {
         } else if ad is RewardedAd {
             // Call stored completion with reward status, then reload
             rewardedAdCompletion?(didEarnReward)
+            rewardedAdCompletion = nil
+            didEarnReward = false
+            loadRewardedAd()
+        }
+    }
+
+    func ad(_ ad: FullScreenPresentingAd, didFailToPresentFullScreenContentWithError error: Error) {
+        if ad is InterstitialAd {
+            interstitialCompletion?()
+            interstitialCompletion = nil
+            loadInterstitial()
+        } else if ad is RewardedAd {
+            rewardedAdCompletion?(false)
             rewardedAdCompletion = nil
             didEarnReward = false
             loadRewardedAd()

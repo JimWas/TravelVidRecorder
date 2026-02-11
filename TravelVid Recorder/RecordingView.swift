@@ -82,10 +82,9 @@ struct RecordingView: View {
                 cornerTapZones
             }
 
-            // MANDATORY RECORDING INDICATOR (Required by Apple Guideline 2.5.14)
-            // This indicator CANNOT be disabled and must clearly show video & audio recording
+            // Recording indicator (optional, controlled in Advanced Settings)
             // Positioned prominently and always visible above all other content
-            if !sessionFailed && !isPreparingSession {
+            if manager.showRecordingIndicator && !sessionFailed && !isPreparingSession {
                 VStack {
                     HStack {
                         Spacer()
@@ -179,9 +178,8 @@ struct RecordingView: View {
         }
     }
     
-    // MARK: - Recording Indicator (Required by Apple App Store Guideline 2.5.14)
-    // This indicator MUST be visible at all times during recording
-    // It clearly shows BOTH video AND audio are being recorded
+    // MARK: - Recording Indicator
+    // Clearly shows video and audio are being recorded
     @State private var indicatorPulse = false
 
     private var recordingIndicator: some View {

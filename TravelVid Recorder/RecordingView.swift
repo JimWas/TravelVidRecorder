@@ -43,7 +43,7 @@ struct RecordingView: View {
                 }
 
             case .fakeCall:
-                // Phone Call Screen
+                // Fake Calling Screen
                 FakeCallingView(contactName: manager.fakeCallContactName)
                     .ignoresSafeArea(.all)
 
@@ -60,6 +60,11 @@ struct RecordingView: View {
             case .bitcoin:
                 // Bitcoin Price Tracker
                 BitcoinPriceView()
+                    .ignoresSafeArea(.all)
+
+            case .calculator:
+                // Calculator
+                CalculatorView()
                     .ignoresSafeArea(.all)
             }
 
@@ -412,16 +417,7 @@ struct StopGestureModifier: ViewModifier {
         case .doubleTapHold:
             content
                 .simultaneousGesture(
-                    TapGesture(count: 2)
-                        .onEnded { _ in
-                            // Trigger hold check after double tap
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                // Will check if user is still holding
-                            }
-                        }
-                )
-                .simultaneousGesture(
-                    LongPressGesture(minimumDuration: 2.0)
+                    LongPressGesture(minimumDuration: Double(manager.holdDuration))
                         .onEnded { _ in
                             onStop()
                         }

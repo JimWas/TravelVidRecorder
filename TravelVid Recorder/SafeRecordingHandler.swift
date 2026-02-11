@@ -4,15 +4,104 @@ import UIKit
 
 /// Handles safe recording with proper cleanup and interruption handling
 class SafeRecordingHandler: NSObject {
-    
+
     static let shared = SafeRecordingHandler()
-    
+
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var activeRecordingURL: URL?
-    
+
+    // Silent audio player to keep app alive in background
+    private var silentAudioPlayer: AVAudioPlayer?
+    private var isBackgroundAudioActive = false
+
     private override init() {
         super.init()
         setupNotifications()
+        prepareSilentAudio()
+    }
+
+    // MARK: - Silent Audio Setup (Keeps App Alive in Background)
+    private func prepareSilentAudio() {
+        // Create a very short silent audio file in memory
+        // This keeps the audio session active so iOS doesn't suspend us
+        do {
+            // Generate 0.5 seconds of silence (minimal CPU usage)
+            let sampleRate: Double = 44100
+            let duration: Double = 0.5
+            let numSamples = Int(sampleRate * duration)
+
+            var audioData = Data()
+
+            // WAV header
+            let headerSize: UInt32 = 44
+            let dataSize: UInt32 = UInt32(numSamples * 2)
+            let fileSize: UInt32 = headerSize + dataSize - 8
+
+            // RIFF header
+            audioData.append(contentsOf: "RIFF".utf8)
+            audioData.append(contentsOf: withUnsafeBytes(of: fileSize.littleEndian) { Array($0) })
+            audioData.append(contentsOf: "WAVE".utf8)
+
+            // fmt chunk
+            audioData.append(contentsOf: "fmt ".utf8)
+            audioData.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) }) // chunk size
+            audioData.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })  // PCM format
+            audioData.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })  // mono
+            audioData.append(contentsOf: withUnsafeBytes(of: UInt32(44100).littleEndian) { Array($0) }) // sample rate
+            audioData.append(contentsOf: withUnsafeBytes(of: UInt32(88200).littleEndian) { Array($0) }) // byte rate
+            audioData.append(contentsOf: withUnsafeBytes(of: UInt16(2).littleEndian) { Array($0) })  // block align
+            audioData.append(contentsOf: withUnsafeBytes(of: UInt16(16).littleEndian) { Array($0) }) // bits per sample
+
+            // data chunk
+            audioData.append(contentsOf: "data".utf8)
+            audioData.append(contentsOf: withUnsafeBytes(of: dataSize.littleEndian) { Array($0) })
+
+            // Silent samples (zeros)
+            audioData.append(Data(count: Int(dataSize)))
+
+            silentAudioPlayer = try AVAudioPlayer(data: audioData)
+            silentAudioPlayer?.numberOfLoops = -1 // Loop forever
+            silentAudioPlayer?.volume = 0.0 // Completely silent
+            silentAudioPlayer?.prepareToPlay()
+
+            print("✅ Silent audio player prepared for background execution")
+        } catch {
+            print("⚠️ Failed to prepare silent audio: \(error)")
+        }
+    }
+
+    func startBackgroundAudio() {
+        guard !isBackgroundAudioActive else { return }
+
+        // Ensure audio session is active before playing
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setActive(true)
+            print("🔊 Audio session activated")
+        } catch {
+            print("⚠️ Failed to activate audio session: \(error)")
+        }
+
+        guard let player = silentAudioPlayer else {
+            print("⚠️ Silent audio player not initialized!")
+            return
+        }
+
+        let started = player.play()
+        if started {
+            isBackgroundAudioActive = true
+            print("🔇 Background audio started (keeps app alive) - isPlaying: \(player.isPlaying)")
+        } else {
+            print("⚠️ Failed to start background audio!")
+        }
+    }
+
+    func stopBackgroundAudio() {
+        guard isBackgroundAudioActive else { return }
+
+        silentAudioPlayer?.stop()
+        isBackgroundAudioActive = false
+        print("🔇 Background audio stopped")
     }
     
     // MARK: - Setup Notifications
@@ -45,11 +134,13 @@ class SafeRecordingHandler: NSObject {
     func startRecordingSession(url: URL) {
         activeRecordingURL = url
         startBackgroundTask()
+        startBackgroundAudio() // Keep app alive in background
     }
-    
+
     @MainActor
     func endRecordingSession() {
         activeRecordingURL = nil
+        stopBackgroundAudio()
         endBackgroundTask()
     }
     
@@ -68,27 +159,21 @@ class SafeRecordingHandler: NSObject {
             }
         }
         
-        // Monitor remaining time and warn if getting low
+        // Monitor remaining time
         if backgroundTaskID != .invalid {
             let remainingTime = UIApplication.shared.backgroundTimeRemaining
-            
+
             // Check if time is valid (not infinite)
             if remainingTime != .greatestFiniteMagnitude && remainingTime.isFinite {
                 print("🕐 Background task started. Remaining time: \(Int(remainingTime))s")
             } else {
-                print("🕐 Background task started. Remaining time: unlimited")
+                print("🕐 Background task started. Remaining time: unlimited (audio background mode)")
             }
-            
-            // Schedule automatic cleanup before iOS force-kills us
-            Task { @MainActor in
-                // Wait for 25 seconds (leaving 5 second buffer before 30s limit)
-                try? await Task.sleep(for: .seconds(25))
-                
-                if self.backgroundTaskID != .invalid {
-                    print("⏰ Background task approaching limit - cleaning up")
-                    self.endBackgroundTask()
-                }
-            }
+
+            // Note: We no longer auto-end the background task after 25s because:
+            // 1. Silent audio playback gives us unlimited background time
+            // 2. The old 25s timeout was causing premature recording stops
+            // The expiration handler will still be called if iOS decides to suspend us
         }
     }
     
@@ -103,21 +188,35 @@ class SafeRecordingHandler: NSObject {
     
     @MainActor
     private func handleBackgroundTimeout() {
-        // Emergency cleanup if we run out of background time
-        print("⚠️ Background task expiring - emergency cleanup")
+        // Background task is expiring - this means silent audio isn't working
+        print("⚠️ Background task expiring - attempting to keep recording alive")
+
+        // Try to restart silent audio
+        if let player = silentAudioPlayer, !player.isPlaying {
+            print("🔄 Restarting silent audio...")
+            player.play()
+        }
+
+        // We MUST end the background task to avoid iOS killing the app
+        // But if silent audio is working, the app will stay alive anyway
         endBackgroundTask()
+
+        // Request a new background task immediately
+        if activeRecordingURL != nil {
+            print("🔄 Requesting new background task...")
+            startBackgroundTask()
+        }
     }
     
     // MARK: - App Lifecycle Handlers
     @objc private func handleAppWillResignActive() {
         // App losing focus (power button, incoming call, etc.)
-        print("📱 App will resign active - ensuring video file safety")
-        
-        // Post notification for RecordingManager to gracefully stop
-        NotificationCenter.default.post(
-            name: NSNotification.Name("SafeStopRecording"),
-            object: nil
-        )
+        print("📱 App will resign active - continuing recording in background")
+
+        // Previously this stopped recording, but now we continue in background
+        // thanks to the silent audio playback keeping the app alive.
+        // Only post SafeStopRecording if we need to stop for some reason
+        // (handled by RecordingManager's interruption handlers instead)
     }
     
     @objc private func handleAppWillTerminate() {
@@ -133,8 +232,17 @@ class SafeRecordingHandler: NSObject {
     
     @MainActor @objc private func handleAppDidEnterBackground() {
         print("🌙 App entered background - maintaining background task")
-        
-        // Ensure we have background time to finish current segment
+
+        // Verify silent audio is playing (critical for staying alive)
+        if let player = silentAudioPlayer {
+            if !player.isPlaying && activeRecordingURL != nil {
+                print("⚠️ Silent audio not playing in background - restarting")
+                player.play()
+            }
+            print("🔇 Silent audio status: isPlaying=\(player.isPlaying)")
+        }
+
+        // Ensure we have background time
         if backgroundTaskID == .invalid {
             startBackgroundTask()
         }

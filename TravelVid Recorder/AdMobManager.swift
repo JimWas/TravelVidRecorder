@@ -4,15 +4,19 @@ import UIKit
 
 class AdMobManager: NSObject, ObservableObject {
     static let shared = AdMobManager()
-    
+
     // Properties updated to native Swift naming
     private var interstitial: InterstitialAd?
     private var rewardedAd: RewardedAd?
-    
+
+    // Track pending completion handler for rewarded ads
+    private var rewardedAdCompletion: ((Bool) -> Void)?
+    private var didEarnReward = false
+
     // MARK: - Ad Unit IDs
     let interstitialID = "ca-app-pub-3057383894764696/4200169611"
     let rewardedID     = "ca-app-pub-3057383894764696/5439021675"
-    
+
     override init() {
         super.init()
     }
@@ -72,12 +76,16 @@ class AdMobManager: NSObject, ObservableObject {
             completion(false)
             return
         }
-        
+
         if let ad = rewardedAd {
+            // Store completion to call it when ad dismisses or fails
+            rewardedAdCompletion = completion
+            didEarnReward = false
+
             // New signature: from:userDidEarnRewardHandler:
-            ad.present(from: root) {
+            ad.present(from: root) { [weak self] in
                 print("User earned reward.")
-                completion(true)
+                self?.didEarnReward = true
             }
         } else {
             print("Rewarded ad wasn't ready.")
@@ -98,19 +106,28 @@ class AdMobManager: NSObject, ObservableObject {
 
 // MARK: - Delegate to Reload Ads
 extension AdMobManager: FullScreenContentDelegate {
-    
+
     func adDidDismissFullScreenContent(_ ad: FullScreenPresentingAd) {
         if ad is InterstitialAd {
             loadInterstitial()
         } else if ad is RewardedAd {
+            // Call stored completion with reward status, then reload
+            rewardedAdCompletion?(didEarnReward)
+            rewardedAdCompletion = nil
+            didEarnReward = false
             loadRewardedAd()
         }
     }
-    
+
     func ad(_ ad: FullScreenPresentingAd, didFailToPresentFullScreenContentWithError error: Error) {
+        print("Ad failed to present: \(error.localizedDescription)")
         if ad is InterstitialAd {
             loadInterstitial()
         } else if ad is RewardedAd {
+            // Call stored completion with false since ad failed to show
+            rewardedAdCompletion?(false)
+            rewardedAdCompletion = nil
+            didEarnReward = false
             loadRewardedAd()
         }
     }

@@ -336,7 +336,9 @@ class BitcoinPriceTracker: ObservableObject {
     func startUpdating() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.updatePrice()
+            Task { @MainActor in
+                self?.updatePrice()
+            }
         }
     }
     

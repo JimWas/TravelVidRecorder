@@ -397,7 +397,9 @@ class FlappyBirdGame: ObservableObject {
         // Start game loop
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1/60, repeats: true) { [weak self] _ in
-            self?.update()
+            Task { @MainActor in
+                self?.update()
+            }
         }
     }
     

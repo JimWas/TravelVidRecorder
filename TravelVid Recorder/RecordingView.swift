@@ -95,6 +95,7 @@ struct RecordingView: View {
                     Spacer()
                 }
                 .zIndex(10000) // Ensure indicator is always on top
+                .allowsHitTesting(false)
             }
 
             // Loading indicator while preparing session
@@ -366,7 +367,7 @@ struct StopGestureModifier: ViewModifier {
         switch manager.stopGesture {
         case .fourTaps, .fiveTaps:
             content
-                .simultaneousGesture(
+                .highPriorityGesture(
                     TapGesture(count: 1)
                         .onEnded { _ in
                             if !showFakePopup {
@@ -377,7 +378,7 @@ struct StopGestureModifier: ViewModifier {
             
         case .swipeDown:
             content
-                .simultaneousGesture(
+                .highPriorityGesture(
                     DragGesture(minimumDistance: 50)
                         .onEnded { value in
                             if value.translation.height > 100 && abs(value.translation.width) < 50 {
@@ -388,7 +389,7 @@ struct StopGestureModifier: ViewModifier {
             
         case .swipeLeft:
             content
-                .simultaneousGesture(
+                .highPriorityGesture(
                     DragGesture(minimumDistance: 50)
                         .onEnded { value in
                             if value.translation.width < -100 && abs(value.translation.height) < 50 {
@@ -399,7 +400,7 @@ struct StopGestureModifier: ViewModifier {
             
         case .swipeRight:
             content
-                .simultaneousGesture(
+                .highPriorityGesture(
                     DragGesture(minimumDistance: 50)
                         .onEnded { value in
                             if value.translation.width > 100 && abs(value.translation.height) < 50 {
@@ -414,7 +415,7 @@ struct StopGestureModifier: ViewModifier {
             
         case .doubleTapHold:
             content
-                .simultaneousGesture(
+                .highPriorityGesture(
                     LongPressGesture(minimumDuration: Double(manager.holdDuration))
                         .onEnded { _ in
                             onStop()

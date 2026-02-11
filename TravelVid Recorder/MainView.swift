@@ -496,12 +496,26 @@ struct MainView: View {
         VStack(spacing: 0) {
             DisclosureGroup(isExpanded: $showAdvancedSettings) {
                 VStack(spacing: 12) {
-                    Toggle(isOn: $manager.showRecordingIndicator) {
-                        Label("Recording Indicator", systemImage: "record.circle")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                    HStack(spacing: 12) {
+                        Image(systemName: "record.circle")
+                            .font(.title3)
+                            .foregroundColor(.red)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Recording Indicator")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Show a visible indicator while recording.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $manager.showRecordingIndicator)
+                            .labelsHidden()
+                            .tint(.red)
                     }
-                    .tint(.red)
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
                 }
                 .padding(.top, 8)
             } label: {

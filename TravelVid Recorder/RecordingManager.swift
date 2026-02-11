@@ -455,63 +455,14 @@ class RecordingManager: NSObject, ObservableObject {
         let session = AVCaptureSession()
         session.beginConfiguration()
 
-        // Try to set the requested preset, fall back to lower resolutions if not supported
-        var presetToUse = selectedResolution.preset
-        if !session.canSetSessionPreset(presetToUse) {
-            logger.warning("Requested preset \(presetToUse.rawValue) not supported, trying fallback")
-            // Try fallback presets in order of preference
-            let fallbacks: [AVCaptureSession.Preset] = [.hd1920x1080, .hd1280x720, .high]
-            presetToUse = fallbacks.first { session.canSetSessionPreset($0) } ?? .high
-        }
-        session.sessionPreset = presetToUse
+        applyPreset(to: session)
 
-        // Video input
-        guard let vdevice = bestDevice() else {
-            logger.error("No suitable camera device found")
+        guard configureInputs(session: session, micEnabled: mic) else {
             session.commitConfiguration()
             return false
         }
 
-        do {
-            let vInput = try AVCaptureDeviceInput(device: vdevice)
-            if session.canAddInput(vInput) {
-                session.addInput(vInput)
-                videoInput = vInput
-            } else {
-                logger.error("Cannot add video input to session")
-                session.commitConfiguration()
-                return false
-            }
-        } catch {
-            logger.error("Failed to create video input: \(error.localizedDescription)")
-            session.commitConfiguration()
-            return false
-        }
-
-        // Audio input
-        if mic, let micDev = AVCaptureDevice.default(for: .audio) {
-            do {
-                let aInput = try AVCaptureDeviceInput(device: micDev)
-                if session.canAddInput(aInput) { session.addInput(aInput); audioInput = aInput }
-            } catch {
-                logger.warning("Failed to add audio input: \(error.localizedDescription)")
-            }
-        }
-
-        // Output
-        let movie = AVCaptureMovieFileOutput()
-        if session.canAddOutput(movie) {
-            session.addOutput(movie)
-            movieOutput = movie
-
-            // Enable stabilization if requested
-            if enableStabilization, let connection = movie.connection(with: .video) {
-                if connection.isVideoStabilizationSupported {
-                    connection.preferredVideoStabilizationMode = .standard
-                }
-            }
-        } else {
-            logger.error("Cannot add movie output to session")
+        if !configureOutput(session: session) {
             session.commitConfiguration()
             return false
         }
@@ -552,6 +503,103 @@ class RecordingManager: NSObject, ObservableObject {
         return true
     }
 
+    func reconfigureSessionIfNeeded() async {
+        guard let session = captureSession else { return }
+        guard !isRecording else { return }
+
+        let cam = await requestVideo()
+        if !cam { return }
+
+        let mic = audioOn ? await requestAudio() : true
+
+        session.beginConfiguration()
+        applyPreset(to: session)
+
+        if let vInput = videoInput {
+            session.removeInput(vInput)
+            videoInput = nil
+        }
+        if let aInput = audioInput {
+            session.removeInput(aInput)
+            audioInput = nil
+        }
+
+        guard configureInputs(session: session, micEnabled: mic) else {
+            session.commitConfiguration()
+            return
+        }
+
+        if movieOutput == nil {
+            _ = configureOutput(session: session)
+        } else if enableStabilization,
+                  let output = movieOutput,
+                  let connection = output.connection(with: .video),
+                  connection.isVideoStabilizationSupported {
+            connection.preferredVideoStabilizationMode = .standard
+        }
+
+        session.commitConfiguration()
+    }
+
+    private func applyPreset(to session: AVCaptureSession) {
+        var presetToUse = selectedResolution.preset
+        if !session.canSetSessionPreset(presetToUse) {
+            logger.warning("Requested preset \(presetToUse.rawValue) not supported, trying fallback")
+            let fallbacks: [AVCaptureSession.Preset] = [.hd1920x1080, .hd1280x720, .high]
+            presetToUse = fallbacks.first { session.canSetSessionPreset($0) } ?? .high
+        }
+        session.sessionPreset = presetToUse
+    }
+
+    private func configureInputs(session: AVCaptureSession, micEnabled: Bool) -> Bool {
+        guard let vdevice = bestDevice() else {
+            logger.error("No suitable camera device found")
+            return false
+        }
+
+        do {
+            let vInput = try AVCaptureDeviceInput(device: vdevice)
+            if session.canAddInput(vInput) {
+                session.addInput(vInput)
+                videoInput = vInput
+            } else {
+                logger.error("Cannot add video input to session")
+                return false
+            }
+        } catch {
+            logger.error("Failed to create video input: \(error.localizedDescription)")
+            return false
+        }
+
+        if micEnabled, let micDev = AVCaptureDevice.default(for: .audio) {
+            do {
+                let aInput = try AVCaptureDeviceInput(device: micDev)
+                if session.canAddInput(aInput) { session.addInput(aInput); audioInput = aInput }
+            } catch {
+                logger.warning("Failed to add audio input: \(error.localizedDescription)")
+            }
+        }
+
+        return true
+    }
+
+    private func configureOutput(session: AVCaptureSession) -> Bool {
+        let movie = AVCaptureMovieFileOutput()
+        if session.canAddOutput(movie) {
+            session.addOutput(movie)
+            movieOutput = movie
+
+            if enableStabilization, let connection = movie.connection(with: .video) {
+                if connection.isVideoStabilizationSupported {
+                    connection.preferredVideoStabilizationMode = .standard
+                }
+            }
+            return true
+        } else {
+            logger.error("Cannot add movie output to session")
+            return false
+        }
+    }
 
     private func bestDevice() -> AVCaptureDevice? {
         if cameraPosition == .front {
@@ -615,8 +663,6 @@ class RecordingManager: NSObject, ObservableObject {
         LocationManager.shared.stopTracking()
         LocationManager.shared.onLocationUpdate = nil
 
-        // NEW: Notify safety handler
-        SafeRecordingHandler.shared.endRecordingSession()
         print("🛑 Recording stopped and all timers invalidated")
     }
 
@@ -816,7 +862,8 @@ class RecordingManager: NSObject, ObservableObject {
 
         for url in files where url.pathExtension.lowercased() == "mov" {
             // NEW: Verify file integrity before adding to list
-            guard SafeRecordingHandler.shared.verifyFileIntegrity(at: url) else {
+            let isValid = await SafeRecordingHandler.shared.verifyFileIntegrity(at: url)
+            guard isValid else {
                 print("⚠️ Skipping corrupted file: \(url.lastPathComponent)")
                 continue
             }

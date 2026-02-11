@@ -148,6 +148,22 @@ struct MainView: View {
                 }
             }
         }
+        // Reconfigure capture session when settings change (if not recording)
+        .onChange(of: manager.cameraPosition) { _ in
+            Task { await manager.reconfigureSessionIfNeeded() }
+        }
+        .onChange(of: manager.cameraType) { _ in
+            Task { await manager.reconfigureSessionIfNeeded() }
+        }
+        .onChange(of: manager.selectedResolution) { _ in
+            Task { await manager.reconfigureSessionIfNeeded() }
+        }
+        .onChange(of: manager.audioOn) { _ in
+            Task { await manager.reconfigureSessionIfNeeded() }
+        }
+        .onChange(of: manager.enableStabilization) { _ in
+            Task { await manager.reconfigureSessionIfNeeded() }
+        }
         // Load Video Task
         .onChange(of: videoPickerItem) {
             guard videoPickerItem != nil else { return }
@@ -845,6 +861,7 @@ struct MapSnapshotView: View {
     let latitude: Double
     let longitude: Double
     @State private var snapshotImage: UIImage?
+    private static let cache = NSCache<NSString, UIImage>()
 
     var body: some View {
         Group {
@@ -866,6 +883,12 @@ struct MapSnapshotView: View {
     }
 
     private func generateSnapshot() {
+        let cacheKey = NSString(string: String(format: "%.6f,%.6f", latitude, longitude))
+        if let cached = Self.cache.object(forKey: cacheKey) {
+            snapshotImage = cached
+            return
+        }
+
         let options = MKMapSnapshotter.Options()
         let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         options.region = MKCoordinateRegion(
@@ -899,6 +922,7 @@ struct MapSnapshotView: View {
             }
 
             DispatchQueue.main.async {
+                Self.cache.setObject(image, forKey: cacheKey)
                 self.snapshotImage = image
             }
         }

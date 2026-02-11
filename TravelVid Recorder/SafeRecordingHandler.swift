@@ -266,7 +266,7 @@ class SafeRecordingHandler: NSObject {
 
     /// Synchronous file integrity check - only checks file size and basic attributes
     /// Use this for quick checks that won't block the main thread
-    func verifyFileIntegrity(at url: URL) -> Bool {
+    func verifyFileIntegrityQuick(at url: URL) -> Bool {
         // Check if file exists and is readable
         guard FileManager.default.fileExists(atPath: url.path) else {
             return false
@@ -283,7 +283,7 @@ class SafeRecordingHandler: NSObject {
 
     /// Async file integrity check - thoroughly verifies the file is playable
     /// This should be used when you can await the result
-    func verifyFileIntegrityAsync(at url: URL) async -> Bool {
+    func verifyFileIntegrity(at url: URL) async -> Bool {
         // Check if file exists and is readable
         guard FileManager.default.fileExists(atPath: url.path) else {
             return false
@@ -328,7 +328,7 @@ class SafeRecordingHandler: NSObject {
             }
 
             // Verify file integrity asynchronously (no deadlock risk)
-            let isValid = await verifyFileIntegrityAsync(at: file)
+            let isValid = await verifyFileIntegrity(at: file)
             if !isValid {
                 print("🗑️ Removing unplayable file: \(file.lastPathComponent)")
                 try? fileManager.removeItem(at: file)

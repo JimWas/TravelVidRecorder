@@ -90,9 +90,9 @@ struct RecordingView: View {
                     .zIndex(9998)
             }
 
-            // Recording indicator (always visible while recording)
+            // Recording indicator (optional, controlled in Advanced Settings)
             // Positioned prominently and always visible above all other content
-            if !sessionFailed && !isPreparingSession {
+            if manager.showRecordingIndicator && !sessionFailed && !isPreparingSession {
                 VStack {
                     HStack {
                         Spacer()

@@ -6,9 +6,9 @@ This file provides comprehensive guidance to AI assistants when working with thi
 
 ## PROJECT OVERVIEW
 
-**TravelVid Recorder** is a stealth video recording iOS app designed to deter theft while capturing footage discreetly. It displays deceptive interfaces (cover images, games, fake calls, calculator) while recording video in the background.
+**TravelVid Recorder** is a video recording iOS app designed for travel safety and documentation. It can display cover interfaces (cover images, games, fake calls, calculator) while recording video with a visible recording indicator.
 
-**Target Use Case**: Personal safety/security - recording potential theft or incidents without alerting the perpetrator.
+**Target Use Case**: Personal safety/security - recording incidents with clear recording status.
 
 ---
 

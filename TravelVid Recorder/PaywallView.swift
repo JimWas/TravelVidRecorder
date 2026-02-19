@@ -10,7 +10,6 @@ struct PaywallView: View {
     private let features: [(icon: String, title: String)] = [
         ("play.rectangle.fill", "Video Playback Mode"),
         ("phone.fill", "Fake Call Mode"),
-        ("gamecontroller.fill", "Tetris Mode"),
         ("bird.fill", "Flappy Bird Mode"),
         ("bitcoinsign.circle.fill", "Bitcoin Price Mode"),
         ("plus.forwardslash.minus", "Calculator Mode"),
@@ -30,7 +29,7 @@ struct PaywallView: View {
                         Text("TravelVid Premium")
                             .font(.title.bold())
 
-                        Text("Unlock all recording modes")
+                        Text("Unlock premium recording modes")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }

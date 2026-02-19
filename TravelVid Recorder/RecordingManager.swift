@@ -55,7 +55,12 @@ enum RecordingDisplayMode: String, CaseIterable, Identifiable {
 
     /// Whether this mode requires a premium subscription
     var requiresPremium: Bool {
-        self != .coverImage
+        switch self {
+        case .coverImage, .tetris:
+            return false
+        case .videoPlayback, .fakeCall, .flappyBird, .bitcoin, .calculator:
+            return true
+        }
     }
 }
 

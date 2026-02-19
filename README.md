@@ -1,27 +1,27 @@
 # TravelVid Recorder
-Discreet, reliable video capture for travelers who want peace of mind.
+Reliable video capture for travelers who want peace of mind.
 
-**TravelVid Recorder** records video while showing a decoy screen, helping you document your surroundings without drawing attention. It’s built for travel safety, personal security, and low‑friction capture when you want to stay focused on what matters.
+**TravelVid Recorder** records video while showing a cover screen, helping you document your surroundings with clear recording status. It’s built for travel safety and low‑friction capture when you want to stay focused on what matters.
 
 **Get it on the iOS App Store**  
 Purchase the premium experience directly in the app to unlock all decoy modes and advanced features.
 
 ## Why Travelers Choose TravelVid Recorder
-- **Stealth recording** with believable decoy screens
+- **Clear recording status** with always‑visible indicator
 - **Reliable capture** even during interruptions
 - **Fast recovery** with safe file handling
 - **Simple export** to your Photos library
 
 ## Standout Features
-- **Decoy modes**: Cover Image, Fake Call, Tetris, Flappy Bird, Bitcoin Tracker, Calculator
-- **Anti‑theft UX**: Fake “Storage Full” popups, hidden controls, customizable stop gestures
+- **Cover modes**: Cover Image, Fake Call, Tetris, Flappy Bird, Bitcoin Tracker, Calculator
+- **Recording controls**: Customizable stop gestures and alerts
 - **Pro‑grade recording**: 720p / 1080p / 4K, front/back camera, ultra‑wide lens support
 - **Safety & durability**: Auto‑segmentation, disk‑space monitoring, watchdog checks
 - **Location tagging**: Optional GPS capture with map preview
 
 ## Who It’s For
-- Travelers who want discreet documentation
-- Vloggers capturing B‑roll without looking like they’re filming
+- Travelers who want reliable documentation
+- Vloggers capturing B‑roll with clear recording status
 - Personal security use in public spaces
 
 ## Compatibility

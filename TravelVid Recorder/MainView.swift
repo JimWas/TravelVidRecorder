@@ -59,6 +59,11 @@ struct MainView: View {
                         // Main Settings Card
                         configurationSection
                         
+                        // Premium CTA
+                        if !subscriptionManager.isPremium {
+                            premiumCtaSection
+                        }
+
                         // Big Action Button
                         startRecordingButton
                         
@@ -481,6 +486,30 @@ struct MainView: View {
             }
             .padding()
         }
+        .background(Color.white)
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+
+    private var premiumCtaSection: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "star.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.yellow)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("TravelVid Premium")
+                    .font(.subheadline.weight(.semibold))
+                Text("Unlock premium cover modes")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Button("Go Premium") {
+                showPaywall = true
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding()
         .background(Color.white)
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)

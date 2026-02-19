@@ -135,11 +135,6 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var cameraPosition: AVCaptureDevice.Position = .back
     @Published var cameraType: CameraType = .ultraWide
     @Published var selectedVideoURL: URL?
-    @Published var showRecordingIndicator: Bool = true {
-        didSet {
-            UserDefaults.standard.set(showRecordingIndicator, forKey: "showRecordingIndicator")
-        }
-    }
     @Published var fakeCallContactName: String = "Customer Service" {
         didSet {
             UserDefaults.standard.set(fakeCallContactName, forKey: "fakeCallContactName")
@@ -175,9 +170,6 @@ class RecordingManager: NSObject, ObservableObject {
     private func loadPersistedSettings() {
         if let savedContactName = UserDefaults.standard.string(forKey: "fakeCallContactName") {
             fakeCallContactName = savedContactName
-        }
-        if UserDefaults.standard.object(forKey: "showRecordingIndicator") != nil {
-            showRecordingIndicator = UserDefaults.standard.bool(forKey: "showRecordingIndicator")
         }
     }
     

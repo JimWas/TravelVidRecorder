@@ -58,14 +58,14 @@ struct MainView: View {
                         
                         // Main Settings Card
                         configurationSection
-                        
-                        // Premium CTA
-                        if !subscriptionManager.isPremium {
-                            premiumCtaSection
-                        }
 
                         // Big Action Button
                         startRecordingButton
+
+                        // Premium CTA (below Start Recording)
+                        if !subscriptionManager.isPremium {
+                            premiumCtaSection
+                        }
                         
                         Divider()
                             .padding(.vertical)

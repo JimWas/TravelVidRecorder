@@ -964,7 +964,8 @@ struct FullMapView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
+            GeometryReader { geo in
+                VStack(spacing: 0) {
                 if let lat = recording.latitude, let lon = recording.longitude {
                     Map(initialPosition: .region(MKCoordinateRegion(
                         center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
@@ -982,6 +983,7 @@ struct FullMapView: View {
                             .stroke(.blue, lineWidth: 3)
                         }
                     }
+                    .frame(width: geo.size.width, height: max(260, geo.size.height * 0.6))
                     .mapControls {
                         MapUserLocationButton()
                         MapCompass()
@@ -1053,6 +1055,7 @@ struct FullMapView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+            }
             }
             .navigationTitle("Recording Location")
             .navigationBarTitleDisplayMode(.inline)

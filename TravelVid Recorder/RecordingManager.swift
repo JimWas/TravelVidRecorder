@@ -162,6 +162,7 @@ class RecordingManager: NSObject, ObservableObject {
     private var lastRecordingCheck: Date?
     private var diskSpaceTimer: Timer?
     private var thermalStateObserver: NSObjectProtocol?
+    private var lastRecordingErrorAt: Date?
 
     override init() {
         super.init()
@@ -302,6 +303,11 @@ class RecordingManager: NSObject, ObservableObject {
 
     private func verifyRecordingActive() {
         guard isRecording, let output = movieOutput else { return }
+
+        guard canAttemptRestart() else {
+            print("ℹ️ Skipping restart; app not active or session not ready")
+            return
+        }
 
         if !output.isRecording {
             print("🚨 Recording flag is true but movieOutput is not recording!")
@@ -718,6 +724,11 @@ class RecordingManager: NSObject, ObservableObject {
             print("🚨 Watchdog detected recording stopped unexpectedly!")
             print("🔄 Attempting automatic restart...")
 
+            guard canAttemptRestart() else {
+                print("ℹ️ Watchdog: restart blocked (app not active, session not running, or cooldown)")
+                return
+            }
+
             // Try to restart
             let url = nextURL()
             activeSegmentURL = url
@@ -730,6 +741,22 @@ class RecordingManager: NSObject, ObservableObject {
         print("📊 Watchdog: Recording active - \(Int(recordedDuration))s, \(fileSize / 1024)KB")
 
         lastRecordingCheck = Date()
+    }
+
+    private func canAttemptRestart() -> Bool {
+        if UIApplication.shared.applicationState != .active {
+            return false
+        }
+        if let session = captureSession, !session.isRunning {
+            return false
+        }
+        if isSegmenting {
+            return false
+        }
+        if let lastError = lastRecordingErrorAt, Date().timeIntervalSince(lastError) < 5 {
+            return false
+        }
+        return true
     }
 
     // MARK: - Disk Space Monitoring
@@ -959,6 +986,7 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
             // CRITICAL: Check for recording errors
             if let error = error {
                 print("🚨 Recording error: \(error.localizedDescription)")
+                self.lastRecordingErrorAt = Date()
 
                 // Check if any usable video was recorded despite the error
                 let errorCode = (error as NSError).code

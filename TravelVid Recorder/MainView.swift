@@ -25,6 +25,9 @@ struct MainView: View {
     @State private var showExportAllAlert = false
     @State private var showExportComplete = false
     @State private var exportedCount = 0
+
+    // Advanced Settings
+    @State private var showAdvancedSettings = false
     
     // Map State
     @State private var showMap = false
@@ -58,6 +61,9 @@ struct MainView: View {
                         
                         // Main Settings Card
                         configurationSection
+
+                        // Advanced Settings
+                        advancedSettingsSection
 
                         // Big Action Button
                         startRecordingButton
@@ -483,6 +489,46 @@ struct MainView: View {
                         .foregroundColor(.secondary)
                 }
                 .tint(.blue)
+            }
+            .padding()
+        }
+        .background(Color.white)
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+
+    private var advancedSettingsSection: some View {
+        VStack(spacing: 0) {
+            DisclosureGroup(isExpanded: $showAdvancedSettings) {
+                VStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "record.circle")
+                            .font(.title3)
+                            .foregroundColor(.red)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Status Indicator")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Show or hide the on-screen recording status indicator.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $manager.showRecordingIndicator)
+                            .labelsHidden()
+                            .tint(.red)
+                    }
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+                }
+                .padding(.top, 8)
+            } label: {
+                HStack {
+                    Label("Advanced Settings", systemImage: "slider.horizontal.3")
+                        .font(.headline)
+                    Spacer()
+                }
             }
             .padding()
         }

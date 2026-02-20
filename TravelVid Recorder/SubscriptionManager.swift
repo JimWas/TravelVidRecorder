@@ -20,7 +20,7 @@ class SubscriptionManager: ObservableObject {
         #if DEBUG
         // Check for Xcode StoreKit testing environment or debug override
         // You can also add specific device UDIDs or Apple IDs here
-        return true  // Set to false to test paywall flow in DEBUG
+        return false  // Set to false to test paywall flow in DEBUG
         #else
         return false
         #endif

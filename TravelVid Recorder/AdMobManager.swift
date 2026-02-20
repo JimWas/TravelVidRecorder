@@ -13,27 +13,45 @@ class AdMobManager: NSObject, ObservableObject {
     private var rewardedAdCompletion: ((Bool) -> Void)?
     private var didEarnReward = false
     private var interstitialCompletion: (() -> Void)?
+    private var isSDKInitialized = false
+    private var isSDKInitializing = false
+    private var initializationCompletions: [() -> Void] = []
 
     // MARK: - Ad Unit IDs
-    let interstitialID = "ca-app-pub-3057383894764696/4200169611"
-    let rewardedID     = "ca-app-pub-3057383894764696/5439021675"
+    private(set) var interstitialID: String = ""
+    private(set) var rewardedID: String = ""
 
     override init() {
         super.init()
+        loadConfig()
+    }
+    
+    private func loadConfig() {
+        guard let url = Bundle.main.url(forResource: "Config", withExtension: "plist"),
+              let data = try? Data(contentsOf: url),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+              let adMobConfig = plist["AdMob"] as? [String: String] else {
+            print("🚨 Failed to load AdMob config from Config.plist")
+            return
+        }
+        
+        interstitialID = adMobConfig["InterstitialID"] ?? ""
+        rewardedID = adMobConfig["RewardedID"] ?? ""
+        print("✅ AdMob config loaded successfully")
     }
     
     // MARK: - Initialization
     func initializeAdMob() {
-        // Modern SDK uses MobileAds.shared.start
-        MobileAds.shared.start { status in
-            print("AdMob SDK Initialized")
-            self.loadInterstitial()
-            self.loadRewardedAd()
-        }
+        ensureSDKInitialized()
     }
     
     // MARK: - Interstitial Logic
     func loadInterstitial() {
+        guard isSDKInitialized else {
+            ensureSDKInitialized()
+            return
+        }
+
         let request = Request()
         // New signature: with:request:completionHandler:
         InterstitialAd.load(with: interstitialID, request: request) { [weak self] ad, error in
@@ -47,28 +65,40 @@ class AdMobManager: NSObject, ObservableObject {
     }
     
     func showInterstitialAd(completion: @escaping () -> Void) {
-        guard let root = rootVC else {
+        guard let root = rootVC, root.presentedViewController == nil else {
+            // Never block UX waiting on ads.
+            ensureSDKInitialized()
             completion()
             return
         }
-        if root.presentedViewController != nil {
-            completion()
-            return
-        }
-        
+
         if let ad = interstitial {
             interstitialCompletion = completion
-            // New signature: from:
             ad.present(from: root)
-        } else {
-            print("Interstitial ad wasn't ready.")
+            return
+        }
+
+        // If the ad isn't ready immediately, start loading and continue app flow.
+        print("Interstitial ad wasn't ready.")
+        ensureSDKInitialized()
+        completion()
+    }
+
+    func prewarmInterstitialIfNeeded() {
+        if interstitial != nil { return }
+        ensureSDKInitialized()
+        if isSDKInitialized {
             loadInterstitial()
-            completion()
         }
     }
     
     // MARK: - Rewarded Logic
     func loadRewardedAd() {
+        guard isSDKInitialized else {
+            ensureSDKInitialized()
+            return
+        }
+
         let request = Request()
         // New signature: with:request:completionHandler:
         RewardedAd.load(with: rewardedID, request: request) { [weak self] ad, error in
@@ -82,26 +112,61 @@ class AdMobManager: NSObject, ObservableObject {
     }
     
     func showRewardedAd(completion: @escaping (Bool) -> Void) {
-        guard let root = rootVC else {
-            completion(false)
+        ensureSDKInitialized { [weak self] in
+            guard let self else {
+                completion(false)
+                return
+            }
+
+            guard let root = self.rootVC else {
+                completion(false)
+                return
+            }
+
+            if let ad = self.rewardedAd {
+                self.rewardedAdCompletion = completion
+                self.didEarnReward = false
+
+                ad.present(from: root) { [weak self] in
+                    print("User earned reward.")
+                    self?.didEarnReward = true
+                }
+            } else {
+                print("Rewarded ad wasn't ready.")
+                self.loadRewardedAd()
+                completion(false)
+            }
+        }
+    }
+
+    private func ensureSDKInitialized(completion: (() -> Void)? = nil) {
+        if let completion {
+            initializationCompletions.append(completion)
+        }
+
+        guard !isSDKInitialized else {
+            flushInitializationCompletions()
             return
         }
 
-        if let ad = rewardedAd {
-            // Store completion to call it when ad dismisses or fails
-            rewardedAdCompletion = completion
-            didEarnReward = false
+        guard !isSDKInitializing else { return }
+        isSDKInitializing = true
 
-            // New signature: from:userDidEarnRewardHandler:
-            ad.present(from: root) { [weak self] in
-                print("User earned reward.")
-                self?.didEarnReward = true
-            }
-        } else {
-            print("Rewarded ad wasn't ready.")
-            loadRewardedAd()
-            completion(false)
+        MobileAds.shared.start { [weak self] _ in
+            guard let self else { return }
+            self.isSDKInitializing = false
+            self.isSDKInitialized = true
+            print("AdMob SDK Initialized")
+            self.loadInterstitial()
+            self.loadRewardedAd()
+            self.flushInitializationCompletions()
         }
+    }
+
+    private func flushInitializationCompletions() {
+        let completions = initializationCompletions
+        initializationCompletions.removeAll()
+        completions.forEach { $0() }
     }
     
     // MARK: - Helper to find the Root View Controller

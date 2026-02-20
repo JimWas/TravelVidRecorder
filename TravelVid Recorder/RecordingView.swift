@@ -13,6 +13,7 @@ struct RecordingView: View {
     @State private var lastTapTime = Date()
     @State private var isHolding = false
     @State private var holdTimer: Timer?
+    @State private var fakePopupTimer: Timer?
     @State private var doubleTapDetected = false
     @State private var sessionFailed = false
     @State private var isPreparingSession = true
@@ -68,6 +69,13 @@ struct RecordingView: View {
                     .ignoresSafeArea(.all)
             }
 
+            // STEALTH BLACKOUT OVERLAY
+            if manager.stealthBrightness {
+                Color.black
+                    .ignoresSafeArea(.all)
+                    .zIndex(9997) // Below gesture overlay but above decoy UI
+            }
+
             // POPUP (only if enabled)
             let popupVisible = showFakePopup && manager.showFakePopups
             if popupVisible {
@@ -81,13 +89,6 @@ struct RecordingView: View {
             // Invisible corner tap zones (for corner tap gestures)
             if manager.stopGesture == .topLeftCorner || manager.stopGesture == .topRightCorner {
                 cornerTapZones
-            }
-
-            // Fullscreen gesture capture layer (disabled when popup is shown)
-            if !popupVisible {
-                stopGestureOverlay
-                    .ignoresSafeArea()
-                    .zIndex(9998)
             }
 
             // Recording indicator (optional via Advanced Settings)
@@ -151,6 +152,43 @@ struct RecordingView: View {
             }
         }
         .contentShape(Rectangle())
+        .simultaneousGesture(
+            TapGesture(count: 1)
+                .onEnded { _ in
+                    guard manager.stopGesture == .fourTaps || manager.stopGesture == .fiveTaps else { return }
+                    handleTap()
+                }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 50)
+                .onEnded { value in
+                    guard shouldHandleStopGestures else { return }
+
+                    switch manager.stopGesture {
+                    case .swipeDown:
+                        if value.translation.height > 100 && abs(value.translation.width) < 50 {
+                            stopAndDismiss()
+                        }
+                    case .swipeLeft:
+                        if value.translation.width < -100 && abs(value.translation.height) < 50 {
+                            stopAndDismiss()
+                        }
+                    case .swipeRight:
+                        if value.translation.width > 100 && abs(value.translation.height) < 50 {
+                            stopAndDismiss()
+                        }
+                    default:
+                        break
+                    }
+                }
+        )
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: Double(manager.holdDuration))
+                .onEnded { _ in
+                    guard manager.stopGesture == .doubleTapHold, shouldHandleStopGestures else { return }
+                    stopAndDismiss()
+                }
+        )
         .onAppear {
             _ = HardwareButtonBlocker.shared  // Activate volume blocker
 
@@ -165,8 +203,9 @@ struct RecordingView: View {
 
                     if ok {
                         manager.startRecording()
+                        AdMobManager.shared.prewarmInterstitialIfNeeded()
                         if manager.showFakePopups {
-                            showFakePopupsForever()
+                            startFakePopupTimer()
                         }
                     } else {
                         // Session preparation failed - show error
@@ -177,15 +216,26 @@ struct RecordingView: View {
         }
         .onChange(of: manager.showFakePopups) {
             if !manager.showFakePopups {
+                stopFakePopupTimer()
                 showFakePopup = false
+            } else if manager.isRecording {
+                startFakePopupTimer()
             }
         }
         .onDisappear {
             holdTimer?.invalidate()
+            stopFakePopupTimer()
             if manager.isRecording {
                 manager.stopRecording()
+            } else {
+                // Ensure location tracking stops if we prepared the session but didn't record
+                LocationManager.shared.stopTracking()
             }
         }
+    }
+
+    private var shouldHandleStopGestures: Bool {
+        !(showFakePopup && manager.showFakePopups) && !sessionFailed && !isPreparingSession
     }
     
     // MARK: - Recording Indicator
@@ -271,6 +321,7 @@ struct RecordingView: View {
     
     // MARK: - Tap Handlers
     private func handleTap() {
+        guard shouldHandleStopGestures else { return }
         let now = Date()
         
         // Reset counter if too much time has passed (more than 2 seconds)
@@ -290,6 +341,7 @@ struct RecordingView: View {
     }
     
     private func handleCornerTap() {
+        guard shouldHandleStopGestures else { return }
         let now = Date()
         
         // Reset counter if too much time has passed
@@ -307,20 +359,22 @@ struct RecordingView: View {
     }
 
     // MARK: - Popup Loop
-    private func showFakePopupsForever() {
-        // Schedule popups more safely to avoid integer overflow
-        let maxPopups = 1000 // Reasonable limit instead of 9999
-        
-        for i in 0..<maxPopups {
-            let delay = Double(i) * 2.0
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard manager.showFakePopups else { return }
-                withAnimation(.spring()) {
-                    self.showFakePopup = true
-                }
+    private func startFakePopupTimer() {
+        stopFakePopupTimer()
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            guard manager.showFakePopups, manager.isRecording, !showFakePopup else { return }
+            withAnimation(.spring()) {
+                showFakePopup = true
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        fakePopupTimer = timer
+    }
+
+    private func stopFakePopupTimer() {
+        fakePopupTimer?.invalidate()
+        fakePopupTimer = nil
     }
 
     private func stopAndDismiss() {
@@ -330,66 +384,6 @@ struct RecordingView: View {
         AdMobManager.shared.showInterstitialAd {
             // After ad is dismissed (or failed), dismiss the recording view
             dismiss()
-        }
-    }
-
-    // MARK: - Gesture Overlay
-    @ViewBuilder
-    private var stopGestureOverlay: some View {
-        let base = Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .allowsHitTesting(true)
-
-        switch manager.stopGesture {
-        case .fourTaps, .fiveTaps:
-            base
-                .gesture(
-                    TapGesture(count: 1)
-                        .onEnded { _ in
-                            handleTap()
-                        }
-                )
-        case .swipeDown:
-            base
-                .gesture(
-                    DragGesture(minimumDistance: 50)
-                        .onEnded { value in
-                            if value.translation.height > 100 && abs(value.translation.width) < 50 {
-                                stopAndDismiss()
-                            }
-                        }
-                )
-        case .swipeLeft:
-            base
-                .gesture(
-                    DragGesture(minimumDistance: 50)
-                        .onEnded { value in
-                            if value.translation.width < -100 && abs(value.translation.height) < 50 {
-                                stopAndDismiss()
-                            }
-                        }
-                )
-        case .swipeRight:
-            base
-                .gesture(
-                    DragGesture(minimumDistance: 50)
-                        .onEnded { value in
-                            if value.translation.width > 100 && abs(value.translation.height) < 50 {
-                                stopAndDismiss()
-                            }
-                        }
-                )
-        case .topLeftCorner, .topRightCorner:
-            EmptyView()
-        case .doubleTapHold:
-            base
-                .gesture(
-                    LongPressGesture(minimumDuration: Double(manager.holdDuration))
-                        .onEnded { _ in
-                            stopAndDismiss()
-                        }
-                )
         }
     }
 

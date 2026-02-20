@@ -1118,68 +1118,88 @@ struct FullMapView: View {
 
 // MARK: - Video Preview View
 import AVKit
+import AVFoundation
 
 struct VideoPreviewView: View {
     let recording: Recording
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
+    @State private var isLoading = true
+    @State private var playbackError: String?
+    @State private var loadTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Video Player
-                if let player = player {
-                    VideoPlayer(player: player)
-                        .ignoresSafeArea(edges: .horizontal)
-                } else {
-                    VStack(spacing: 16) {
-                        ProgressView()
-                        Text("Loading video...")
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
-                }
-
-                // Info Panel
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(recording.name)
-                        .font(.headline)
-                        .lineLimit(1)
-
-                    HStack(spacing: 16) {
-                        Label(formatDuration(recording.duration), systemImage: "clock")
-                        Label(formatSize(recording.size), systemImage: "doc")
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                    if let address = recording.address {
-                        HStack(spacing: 8) {
-                            Image(systemName: "mappin.and.ellipse")
-                                .foregroundColor(.red)
-                            Text(address)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(2)
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    // Video Player
+                    if let player = player {
+                        VideoPlayer(player: player)
+                            .frame(width: geo.size.width, height: max(260, geo.size.height * 0.6))
+                            .background(Color.black)
+                    } else {
+                        VStack(spacing: 16) {
+                            if isLoading {
+                                ProgressView()
+                                Text("Loading video...")
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Image(systemName: "video.slash")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                                Text(playbackError ?? "Unable to play this video.")
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                Button("Retry Playback") {
+                                    startLoadingPlayback()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
                         }
+                        .frame(width: geo.size.width, height: max(260, geo.size.height * 0.6))
+                        .background(Color.black)
                     }
 
-                    if let creation = recording.creation {
-                        HStack(spacing: 8) {
-                            Image(systemName: "calendar")
-                                .foregroundColor(.blue)
-                            Text(creation, style: .date)
-                            Text("at")
-                            Text(creation, style: .time)
+                    // Info Panel
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(recording.name)
+                            .font(.headline)
+                            .lineLimit(1)
+
+                        HStack(spacing: 16) {
+                            Label(formatDuration(recording.duration), systemImage: "clock")
+                            Label(formatSize(recording.size), systemImage: "doc")
                         }
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
+
+                        if let address = recording.address {
+                            HStack(spacing: 8) {
+                                Image(systemName: "mappin.and.ellipse")
+                                    .foregroundColor(.red)
+                                Text(address)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+
+                        if let creation = recording.creation {
+                            HStack(spacing: 8) {
+                                Image(systemName: "calendar")
+                                    .foregroundColor(.blue)
+                                Text(creation, style: .date)
+                                Text("at")
+                                Text(creation, style: .time)
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        }
                     }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.ultraThinMaterial)
                 }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.ultraThinMaterial)
             }
             .background(Color.black)
             .navigationTitle("Preview")
@@ -1188,18 +1208,72 @@ struct VideoPreviewView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         player?.pause()
+                        loadTask?.cancel()
                         dismiss()
                     }
                 }
             }
             .onAppear {
-                player = AVPlayer(url: recording.url)
-                player?.play()
+                startLoadingPlayback()
             }
             .onDisappear {
                 player?.pause()
                 player = nil
+                loadTask?.cancel()
             }
+        }
+    }
+
+    private func startLoadingPlayback() {
+        loadTask?.cancel()
+        loadTask = Task {
+            await loadPlaybackWithRetry()
+        }
+    }
+
+    private func loadPlaybackWithRetry() async {
+        await MainActor.run {
+            isLoading = true
+            playbackError = nil
+            player?.pause()
+            player = nil
+        }
+
+        let maxAttempts = 8
+        for attempt in 1...maxAttempts {
+            if Task.isCancelled { return }
+
+            let fileExists = FileManager.default.fileExists(atPath: recording.url.path)
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: recording.url.path)[.size] as? Int64) ?? 0
+
+            if fileExists && fileSize > 1024 {
+                let asset = AVURLAsset(url: recording.url)
+                let isPlayable: Bool
+                if #available(iOS 16.0, *) {
+                    isPlayable = (try? await asset.load(.isPlayable)) ?? false
+                } else {
+                    isPlayable = asset.isPlayable
+                }
+
+                if isPlayable {
+                    await MainActor.run {
+                        player = AVPlayer(url: recording.url)
+                        isLoading = false
+                        playbackError = nil
+                        player?.play()
+                    }
+                    return
+                }
+            }
+
+            if attempt < maxAttempts {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+            }
+        }
+
+        await MainActor.run {
+            isLoading = false
+            playbackError = "Video is still finalizing. Please retry in a moment."
         }
     }
 

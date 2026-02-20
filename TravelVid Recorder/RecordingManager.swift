@@ -150,6 +150,11 @@ class RecordingManager: NSObject, ObservableObject {
             UserDefaults.standard.set(fakeCallContactName, forKey: "fakeCallContactName")
         }
     }
+    @Published var stealthBrightness: Bool = false {
+        didSet {
+            UserDefaults.standard.set(stealthBrightness, forKey: "stealthBrightness")
+        }
+    }
 
     private var captureSession: AVCaptureSession?
     private var movieOutput: AVCaptureMovieFileOutput?
@@ -165,6 +170,7 @@ class RecordingManager: NSObject, ObservableObject {
     // Reliability monitoring
     private var watchdogTimer: Timer?
     private var lastRecordingCheck: Date?
+    private var lastWatchdogStatsLogAt: Date?
     private var diskSpaceTimer: Timer?
     private var thermalStateObserver: NSObjectProtocol?
     private var lastRecordingErrorAt: Date?
@@ -184,6 +190,9 @@ class RecordingManager: NSObject, ObservableObject {
         }
         if UserDefaults.standard.object(forKey: "showRecordingIndicator") != nil {
             showRecordingIndicator = UserDefaults.standard.bool(forKey: "showRecordingIndicator")
+        }
+        if UserDefaults.standard.object(forKey: "stealthBrightness") != nil {
+            stealthBrightness = UserDefaults.standard.bool(forKey: "stealthBrightness")
         }
     }
     
@@ -523,6 +532,9 @@ class RecordingManager: NSObject, ObservableObject {
             return false
         }
 
+        // Start location tracking early to get a fix before recording starts
+        LocationManager.shared.startTracking()
+
         return true
     }
 
@@ -659,6 +671,12 @@ class RecordingManager: NSObject, ObservableObject {
         // Track location updates during recording
         LocationManager.shared.onLocationUpdate = { [weak self] location in
             guard let self = self, self.isRecording else { return }
+            
+            // Capture initial location if we didn't have one at start
+            if self.recordingLocation == nil {
+                self.recordingLocation = location
+            }
+            
             let point = LocationPoint(
                 latitude: location.coordinate.latitude,
                 longitude: location.coordinate.longitude,
@@ -709,6 +727,7 @@ class RecordingManager: NSObject, ObservableObject {
     private func startWatchdogTimer() {
         watchdogTimer?.invalidate()
         lastRecordingCheck = Date()
+        lastWatchdogStatsLogAt = nil
 
         // Check every 10 seconds that recording is still active
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
@@ -743,10 +762,14 @@ class RecordingManager: NSObject, ObservableObject {
             output.startRecording(to: url, recordingDelegate: self)
         }
 
-        // Log recording stats periodically
-        let recordedDuration = output.recordedDuration.seconds
-        let fileSize = output.recordedFileSize
-        print("📊 Watchdog: Recording active - \(Int(recordedDuration))s, \(fileSize / 1024)KB")
+        // Log stats less frequently to reduce debug console overhead.
+        let now = Date()
+        if lastWatchdogStatsLogAt == nil || now.timeIntervalSince(lastWatchdogStatsLogAt ?? .distantPast) >= 60 {
+            let recordedDuration = output.recordedDuration.seconds
+            let fileSize = output.recordedFileSize
+            print("📊 Watchdog: Recording active - \(Int(recordedDuration))s, \(fileSize / 1024)KB")
+            lastWatchdogStatsLogAt = now
+        }
 
         lastRecordingCheck = Date()
     }

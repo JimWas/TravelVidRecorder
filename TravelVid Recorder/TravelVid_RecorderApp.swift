@@ -16,13 +16,35 @@ struct TravelVid_RecorderApp: App {
         setupAudioSession()
     }
 
+    @Environment(\.scenePhase) var scenePhase
+    @State private var isInactive = false
+
     var body: some Scene {
         WindowGroup {
-            MainView()
-                .preferredColorScheme(.light) // Optional: Keep app in light mode
-                .task {
-                    await requestTrackingPermission()
+            ZStack {
+                MainView()
+                    .preferredColorScheme(.light)
+                
+                // Privacy Mask for Stealth: Hide app content in switcher
+                if isInactive {
+                    Color.black
+                        .ignoresSafeArea()
+                        .zIndex(99999)
                 }
+            }
+            .task {
+                await requestTrackingPermission()
+            }
+            .onChange(of: scenePhase) { newPhase in
+                switch newPhase {
+                case .inactive, .background:
+                    isInactive = true
+                case .active:
+                    isInactive = false
+                @unknown default:
+                    break
+                }
+            }
         }
     }
 
@@ -38,10 +60,7 @@ struct TravelVid_RecorderApp: App {
             await ATTrackingManager.requestTrackingAuthorization()
         }
 
-        // Initialize AdMob after ATT (regardless of user's choice)
-        await MainActor.run {
-            AdMobManager.shared.initializeAdMob()
-        }
+        // AdMob now initializes lazily when an ad is first requested.
     }
 
     private func setupAudioSession() {

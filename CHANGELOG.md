@@ -6,6 +6,22 @@ All notable changes to TravelVid Recorder will be documented in this file.
 
 ## [Unreleased] - 2025-02-09
 
+### Performance Improvements - 2026-02-20
+
+#### Ad Loading
+- Switched AdMob initialization to lazy startup (first ad request) instead of app launch
+- Reduced launch-time overhead from ad SDK startup/network handshakes
+- Added safe one-time SDK initialization queue to prevent duplicate startup work
+
+#### Recording UI
+- Replaced fake popup pre-scheduling loop with a single repeating timer
+- Removed thousands of queued `DispatchQueue.main.asyncAfter` tasks during long sessions
+- Added explicit popup timer cleanup on setting changes and view dismissal
+
+#### Recording Reliability Logging
+- Kept watchdog health checks at 10-second intervals
+- Throttled watchdog stats logging to once per 60 seconds to reduce console/main-thread pressure in debug sessions
+
 ### New Features
 
 #### Video Preview

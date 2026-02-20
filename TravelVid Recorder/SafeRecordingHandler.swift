@@ -127,6 +127,40 @@ class SafeRecordingHandler: NSObject {
             name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
+
+        // Monitor audio session interruptions to reclaim background life
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioSessionInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleAudioSessionInterruption(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .began:
+            print("🔇 Audio session interruption began - silent audio paused")
+        case .ended:
+            print("🔊 Audio session interruption ended - attempting to resume silent audio")
+            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                if options.contains(.shouldResume) && isBackgroundAudioActive {
+                    // Reclaim session and resume
+                    try? AVAudioSession.sharedInstance().setActive(true)
+                    silentAudioPlayer?.play()
+                    print("✅ Silent audio resumed successfully")
+                }
+            }
+        @unknown default:
+            break
+        }
     }
     
     // MARK: - Recording Session Management

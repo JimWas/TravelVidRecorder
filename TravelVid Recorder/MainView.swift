@@ -212,15 +212,6 @@ struct MainView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
-            // Quick Storage Toggle
-            VStack(spacing: 4) {
-                Toggle("Fake Popups", isOn: $manager.showFakePopups)
-                    .labelsHidden()
-                    .toggleStyle(SwitchToggleStyle(tint: .orange))
-                Text("Fake Popups")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
         }
         .padding(.top, 10)
     }
@@ -517,6 +508,48 @@ struct MainView: View {
                         Toggle("", isOn: $manager.showRecordingIndicator)
                             .labelsHidden()
                             .tint(.red)
+                    }
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+
+                    HStack(spacing: 12) {
+                        Image(systemName: "light.min")
+                            .font(.title3)
+                            .foregroundColor(.gray)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Stealth Blackout")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Makes the screen completely black while recording (appears as if off).")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $manager.stealthBrightness)
+                            .labelsHidden()
+                            .tint(.blue)
+                    }
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+
+                    HStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.bubble")
+                            .font(.title3)
+                            .foregroundColor(.orange)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Fake Popups")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Shows repeating 'Storage Full' alerts during recording.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $manager.showFakePopups)
+                            .labelsHidden()
+                            .tint(.orange)
                     }
                     .padding(12)
                     .background(Color(uiColor: .secondarySystemBackground))

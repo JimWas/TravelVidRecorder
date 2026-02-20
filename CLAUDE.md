@@ -6,7 +6,7 @@ This file provides comprehensive guidance to AI assistants when working with thi
 
 ## PROJECT OVERVIEW
 
-**TravelVid Recorder** is a video recording iOS app designed for travel safety and documentation. It can display cover interfaces (cover images, games, fake calls, calculator) while recording video with a visible recording indicator.
+**TravelVid Recorder** is a video recording iOS app designed for travel safety and documentation. It can display cover interfaces (cover image, games, fake calls, calculator) while recording video with a configurable recording indicator.
 
 **Target Use Case**: Personal safety/security - recording incidents with clear recording status.
 
@@ -56,7 +56,7 @@ TravelVid Recorder/
 ├── TravelVid_RecorderApp.swift    # App entry point, audio session setup
 ├── MainView.swift                  # Main hub - settings, gallery, controls
 ├── RecordingView.swift             # Full-screen recording with decoy UI
-├── RecordingManager.swift          # Core recording logic (612 lines)
+├── RecordingManager.swift          # Core recording logic
 ├── SafeRecordingHandler.swift      # Background execution, file safety
 ├── LocationManager.swift           # GPS tracking, reverse geocoding
 ├── SubscriptionManager.swift       # StoreKit v2 subscriptions
@@ -94,6 +94,7 @@ TravelVid Recorder/
 @Published var cameraPosition: AVCaptureDevice.Position = .back
 @Published var cameraType: CameraType = .ultraWide
 @Published var selectedVideoURL: URL?           // For video playback mode
+@Published var showRecordingIndicator: Bool = true
 @Published var fakeCallContactName: String = "Customer Service"
 ```
 
@@ -103,12 +104,19 @@ enum RecordingDisplayMode: String, CaseIterable {
     case coverImage = "Cover Image"      // FREE - Static image
     case videoPlayback = "Video Playback" // PREMIUM - Looping video
     case fakeCall = "Fake Call"          // PREMIUM - Fake phone call UI
-    case tetris = "Tetris"               // PREMIUM - Playable game
+    case tetris = "Tetris"               // FREE - Playable game
     case flappyBird = "Flappy Bird"      // PREMIUM - Playable game
     case bitcoin = "Bitcoin Price"       // PREMIUM - Price tracker
     case calculator = "Calculator"       // PREMIUM - Working calculator
 
-    var requiresPremium: Bool { self != .coverImage }
+    var requiresPremium: Bool {
+        switch self {
+        case .coverImage, .tetris:
+            return false
+        default:
+            return true
+        }
+    }
 }
 
 enum StopRecordingGesture: String, CaseIterable {
@@ -156,6 +164,7 @@ func saveSelectedVideo(from: URL)    // Save video for playback mode
 
 #### Reliability Features (recently added)
 - **Watchdog Timer**: Every 10s verifies `movieOutput.isRecording` matches `isRecording`
+- **Watchdog Log Throttle**: Recording stats log at most once per 60s to reduce debug overhead
 - **Thermal Monitoring**: Forces segment save at "serious", stops at "critical"
 - **Memory Pressure**: Forces segment save on low memory warning
 - **Disk Space Monitor**: Warns at <500MB, saves at <250MB, stops at <100MB
@@ -250,12 +259,13 @@ static let shared = AdMobManager()
 private let interstitialID = "ca-app-pub-3057383894764696/4200169611"
 private let rewardedID = "ca-app-pub-3057383894764696/5439021675"
 
-func initializeAdMob()
+func initializeAdMob() // Lazy-safe wrapper
 func loadRewardedAd()
-func showRewardedAd(from viewController: UIViewController, completion: @escaping (Bool) -> Void)
+func showRewardedAd(completion: @escaping (Bool) -> Void)
+func showInterstitialAd(completion: @escaping () -> Void)
 ```
 
-**Ad Flow**: Free users must watch rewarded ad to export videos. Premium users skip ads.
+**Ad Flow**: Free users must watch rewarded ad to export videos. Premium users skip ads. AdMob SDK now initializes lazily on first ad request, not at app launch.
 
 ### 6. HardwareButtonBlocker.swift
 **Prevents volume buttons from working during recording.**
@@ -282,12 +292,13 @@ Uses KVO on `AVAudioSession.outputVolume` to detect button presses, then resets 
 - `MapSnapshotView` - Thumbnail map preview for recordings with GPS
 - `FullMapView` - Full-screen map with recording location and path
 - `VideoPreviewView` - Video playback with AVKit player and metadata display
+- `AdvancedSettingsSection` - Recording indicator toggle and advanced options
 
 ### RecordingView.swift
 **Full-screen recording interface** that:
 - Displays selected decoy mode (game, fake call, etc.)
 - Detects stop gestures
-- Shows fake "iPhone Storage Full" popups
+- Shows fake "iPhone Storage Full" popups (repeating timer while enabled)
 - Activates hardware button blocker
 
 #### Gesture Detection Logic
@@ -470,7 +481,7 @@ NotificationCenter.default.post(name: NSNotification.Name("EmergencyStopRecordin
 ### During Recording
 - Video written to current segment file
 - Location updates collected
-- Watchdog verifies recording every 10s
+- Watchdog verifies recording every 10s (stats logging throttled to 60s)
 - Disk space checked every 30s
 - Thermal state monitored
 - Segment timer fires every N seconds (default 120s)
@@ -503,7 +514,7 @@ NotificationCenter.default.post(name: NSNotification.Name("EmergencyStopRecordin
 | Cover Image Mode | ✓ | ✓ |
 | Video Playback Mode | | ✓ |
 | Fake Call Mode | | ✓ |
-| Tetris Mode | | ✓ |
+| Tetris Mode | ✓ | ✓ |
 | Flappy Bird Mode | | ✓ |
 | Bitcoin Mode | | ✓ |
 | Calculator Mode | | ✓ |
@@ -531,7 +542,7 @@ private let developerOverrideEnabled: Bool = {
 ### Test Recording Reliability
 Watch Xcode console for these logs:
 ```
-📊 Watchdog: Recording active - 45s, 12340KB
+📊 Watchdog: Recording active - 45s, 12340KB   // every ~60s
 🌡️ Thermal state: Fair - device warming up
 ✅ Saved segment: 2024-01-15-14-30-22-ABC123.mov (120s, 245MB)
 ⚠️ Disk space getting low: 450MB available
@@ -571,7 +582,7 @@ Slider(value: $segmentMinutes, in: 1...10, step: 1)
 ### Modify Ad Behavior
 In AdMobManager.swift:
 - Change ad unit IDs for production
-- Modify `showRewardedAd` completion logic
+- Keep lazy initialization (`ensureSDKInitialized`) when adding new ad entry points
 
 ---
 

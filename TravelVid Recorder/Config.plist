@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AdMob</key>
+	<dict>
+		<key>InterstitialID</key>
+		<string>ca-app-pub-3057383894764696/4200169611</string>
+		<key>RewardedID</key>
+		<string>ca-app-pub-3057383894764696/5439021675</string>
+		<key>AppID</key>
+		<string>ca-app-pub-3057383894764696~2364968487</string>
+	</dict>
+</dict>
+</plist>

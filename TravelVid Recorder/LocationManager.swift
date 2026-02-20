@@ -96,12 +96,8 @@ extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             self.authorizationStatus = manager.authorizationStatus
-
-            // Auto-start tracking if authorized
-            if manager.authorizationStatus == .authorizedWhenInUse ||
-               manager.authorizationStatus == .authorizedAlways {
-                self.startTracking()
-            }
+            // We no longer auto-start tracking here to conserve battery and stealth.
+            // Tracking is now managed explicitly by RecordingManager via startTracking/stopTracking.
         }
     }
 

@@ -363,9 +363,11 @@ struct RecordingView: View {
         stopFakePopupTimer()
 
         let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            guard manager.showFakePopups, manager.isRecording, !showFakePopup else { return }
-            withAnimation(.spring()) {
-                showFakePopup = true
+            Task { @MainActor in
+                guard manager.showFakePopups, manager.isRecording, !showFakePopup else { return }
+                withAnimation(.spring()) {
+                    showFakePopup = true
+                }
             }
         }
         RunLoop.main.add(timer, forMode: .common)

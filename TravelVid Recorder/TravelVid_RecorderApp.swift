@@ -35,7 +35,7 @@ struct TravelVid_RecorderApp: App {
             .task {
                 await requestTrackingPermission()
             }
-            .onChange(of: scenePhase) { newPhase in
+            .onChange(of: scenePhase, initial: false) { _, newPhase in
                 switch newPhase {
                 case .inactive, .background:
                     isInactive = true

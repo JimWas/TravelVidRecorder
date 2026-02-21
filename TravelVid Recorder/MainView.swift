@@ -68,10 +68,8 @@ struct MainView: View {
                         // Big Action Button
                         startRecordingButton
 
-                        // Premium CTA (below Start Recording)
-                        if !subscriptionManager.isPremium {
-                            premiumCtaSection
-                        }
+                        // Premium entry point (always visible for App Review discoverability)
+                        premiumCtaSection
                         
                         Divider()
                             .padding(.vertical)
@@ -576,14 +574,14 @@ struct MainView: View {
                 .font(.title2)
                 .foregroundStyle(.yellow)
             VStack(alignment: .leading, spacing: 4) {
-                Text("TravelVid Premium")
+                Text(subscriptionManager.isPremium ? "TravelVid Premium Active" : "TravelVid Premium")
                     .font(.subheadline.weight(.semibold))
-                Text("Unlock premium cover modes")
+                Text(subscriptionManager.isPremium ? "Manage subscription and restore purchases" : "Unlock premium cover modes")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             Spacer()
-            Button("Go Premium") {
+            Button(subscriptionManager.isPremium ? "Manage" : "Go Premium") {
                 showPaywall = true
             }
             .buttonStyle(.borderedProminent)

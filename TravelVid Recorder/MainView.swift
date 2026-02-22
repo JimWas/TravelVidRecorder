@@ -100,12 +100,12 @@ struct MainView: View {
             
             // 1. Export All Alert (With Ad Logic)
             .alert("Export All Videos?", isPresented: $showExportAllAlert) {
-                Button("Watch Ad to Save") {
+                Button("Continue") {
                     attemptExportAll()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Watch a short video to save all \(manager.recordings.count) video(s) to your Photos library.")
+                Text("This will save all \(manager.recordings.count) video(s) to your Photos library.")
             }
             
             // 2. Export Success
@@ -647,7 +647,7 @@ struct MainView: View {
                     
                     Spacer()
                     
-                    Button("Save Selected") { exportSelectedWithConfirmation() }
+                    Button("Save Selected") { attemptExportSelected() }
                         .buttonStyle(.bordered)
                         .disabled(selectedIDs.isEmpty)
                 }
@@ -749,9 +749,7 @@ struct MainView: View {
             if selectMode {
                 toggleSelect(rec.id)
             } else {
-                // Open video preview
-                previewRecording = rec
-                showVideoPreview = true
+                attemptOpenPreview(for: rec)
             }
         }
     }
@@ -772,29 +770,37 @@ struct MainView: View {
     }
     
     private func attemptExportAll() {
-        // 1. Bypass for Premium
         if subscriptionManager.isPremium {
             exportAllWithConfirmation()
             return
         }
-        
-        // 2. Attempt to show Ad
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            AdMobManager.shared.showRewardedAd { rewardEarned in
-                // We trigger the export if they earned the reward
-                // OR if you want to be nice: if the ad failed to load/show.
-                if rewardEarned {
-                    exportAllWithConfirmation()
-                } else {
-                    // FALLBACK: Ad failed or was dismissed.
-                    // To ensure the user isn't stuck, you can either:
-                    // A) Force the save anyway (Good UX if ad failed)
-                    // B) Show an alert saying "Ad failed, please try again."
-                    
-                    print("Ad failed or skipped. Saving anyway to ensure no data loss.")
-                    exportAllWithConfirmation()
-                }
-            }
+
+        AdMobManager.shared.showInterstitialAd {
+            exportAllWithConfirmation()
+        }
+    }
+
+    private func attemptExportSelected() {
+        if subscriptionManager.isPremium {
+            exportSelectedWithConfirmation()
+            return
+        }
+
+        AdMobManager.shared.showInterstitialAd {
+            exportSelectedWithConfirmation()
+        }
+    }
+
+    private func attemptOpenPreview(for rec: Recording) {
+        if subscriptionManager.isPremium {
+            previewRecording = rec
+            showVideoPreview = true
+            return
+        }
+
+        AdMobManager.shared.showInterstitialAd {
+            previewRecording = rec
+            showVideoPreview = true
         }
     }
     private func exportAllWithConfirmation() {

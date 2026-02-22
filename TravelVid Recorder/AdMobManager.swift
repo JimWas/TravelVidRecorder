@@ -66,8 +66,6 @@ class AdMobManager: NSObject, ObservableObject {
     
     func showInterstitialAd(completion: @escaping () -> Void) {
         guard let root = rootVC, root.presentedViewController == nil else {
-            // Never block UX waiting on ads.
-            ensureSDKInitialized()
             completion()
             return
         }
@@ -78,16 +76,13 @@ class AdMobManager: NSObject, ObservableObject {
             return
         }
 
-        // If the ad isn't ready immediately, start loading and continue app flow.
+        // Never trigger SDK startup during stop-flow UI transitions.
         print("Interstitial ad wasn't ready.")
-        ensureSDKInitialized()
         completion()
     }
 
     func prewarmInterstitialIfNeeded() {
-        if interstitial != nil { return }
-        ensureSDKInitialized()
-        if isSDKInitialized {
+        if interstitial == nil, isSDKInitialized {
             loadInterstitial()
         }
     }

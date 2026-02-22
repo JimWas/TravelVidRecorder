@@ -69,13 +69,6 @@ struct RecordingView: View {
                     .ignoresSafeArea(.all)
             }
 
-            // STEALTH BLACKOUT OVERLAY
-            if manager.stealthBrightness {
-                Color.black
-                    .ignoresSafeArea(.all)
-                    .zIndex(9997) // Below gesture overlay but above decoy UI
-            }
-
             // POPUP (only if enabled)
             let popupVisible = showFakePopup && manager.showFakePopups
             if popupVisible {
@@ -91,9 +84,8 @@ struct RecordingView: View {
                 cornerTapZones
             }
 
-            // Recording indicator (optional via Advanced Settings)
-            // Positioned prominently above all other content when enabled
-            if manager.showRecordingIndicator && !sessionFailed && !isPreparingSession {
+            // Recording indicator (always shown while recording screen is active)
+            if !sessionFailed && !isPreparingSession {
                 VStack {
                     HStack {
                         Spacer()
@@ -203,7 +195,6 @@ struct RecordingView: View {
 
                     if ok {
                         manager.startRecording()
-                        AdMobManager.shared.prewarmInterstitialIfNeeded()
                         if manager.showFakePopups {
                             startFakePopupTimer()
                         }

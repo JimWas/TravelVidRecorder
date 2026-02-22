@@ -918,9 +918,6 @@ class RecordingManager: NSObject, ObservableObject {
     private func loadRecordings() async {
         let fm = FileManager.default
         let dir = directory()
-        
-        // NEW: Clean up any corrupted files first
-        await SafeRecordingHandler.shared.cleanupCorruptedFiles(in: dir)
 
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey, .fileSizeKey])
         else { return }
@@ -928,16 +925,14 @@ class RecordingManager: NSObject, ObservableObject {
         var list: [Recording] = []
 
         for url in files where url.pathExtension.lowercased() == "mov" {
-            // NEW: Verify file integrity before adding to list
-            let isValid = await SafeRecordingHandler.shared.verifyFileIntegrity(at: url)
-            guard isValid else {
-                print("⚠️ Skipping corrupted file: \(url.lastPathComponent)")
-                continue
-            }
-            
             let attr = try? fm.attributesOfItem(atPath: url.path)
             let size = attr?[.size] as? Int64 ?? 0
             let creation = attr?[.creationDate] as? Date
+
+            // Fast startup path: skip obviously corrupt tiny files without full AVAsset checks.
+            if size < 1024 {
+                continue
+            }
 
             let asset = AVAsset(url: url)
             let duration: TimeInterval

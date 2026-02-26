@@ -100,6 +100,17 @@ struct PaywallView: View {
                     Button {
                         isPurchasing = true
                         Task {
+                            if subscriptionManager.products.isEmpty {
+                                await subscriptionManager.loadProducts()
+                            }
+
+                            if subscriptionManager.products.isEmpty {
+                                subscriptionManager.purchaseError = "Subscription not available. Please try again."
+                                showError = true
+                                isPurchasing = false
+                                return
+                            }
+
                             await subscriptionManager.purchase()
                             isPurchasing = false
                             if subscriptionManager.isPremium {
@@ -121,11 +132,11 @@ struct PaywallView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: 50)
-                        .background(subscriptionManager.products.isEmpty ? Color.gray : Color.blue)
+                        .background((subscriptionManager.products.isEmpty || isPurchasing) ? Color.gray : Color.blue)
                         .foregroundStyle(.white)
                         .cornerRadius(14)
                     }
-                    .disabled(isPurchasing || subscriptionManager.products.isEmpty)
+                    .disabled(isPurchasing)
                     .padding(.horizontal)
 
                     // Restore

@@ -46,7 +46,7 @@ All notable changes to TravelVid Recorder will be documented in this file.
 #### Audio Session Handling
 - Added `AVAudioSession.interruptionNotification` observer
 - Detects phone calls, Siri activation, and other audio interruptions
-- Recording continues and resumes audio when interruption ends
+- Recording resumes audio when interruption ends (foreground sessions)
 
 #### Recording Delegate Error Handling
 - Recording delegate now properly checks the `error` parameter (was previously ignored)
@@ -82,19 +82,12 @@ All notable changes to TravelVid Recorder will be documented in this file.
 
 ### Background Execution Improvements
 
-#### Silent Audio Player
-- Added silent audio player (0.5s WAV at 0% volume) to keep app alive indefinitely in background
-- Audio session properly activated before playback
-- Verifies audio is playing when entering background
-- Restarts audio if needed during background task expiration
-
 #### Background Task Management
 - Removed aggressive 25-second auto-stop that was causing premature recording stops
-- Background task now requests renewal when expiring
 - Better logging of background task status
 
 #### Info.plist
-- Added `audio` to `UIBackgroundModes` array (was empty, causing background recording to fail)
+- Removed `audio` from `UIBackgroundModes` for App Store compliance
 
 ### Developer Testing
 
@@ -135,7 +128,7 @@ Added comprehensive logging throughout the app:
 - `✅ Saved segment: filename.mov (120s, 245MB)` - Successful saves
 - `⚠️ Disk space getting low: 450MB available` - Storage warnings
 - `🚨 Watchdog detected recording stopped unexpectedly!` - Failure detection
-- `🔇 Background audio started (keeps app alive)` - Background status
+- `🔇 Background audio started (keeps app alive)` - Deprecated (background audio removed)
 - `📍 Location permission denied` - Permission issues
 
 ---

@@ -1,4 +1,4 @@
-# TravelVid Recorder Complete Documentation
+# CLAUDE.md - TravelVid Recorder Complete Documentation
 
 This file provides comprehensive guidance to AI assistants when working with this codebase.
 
@@ -35,7 +35,7 @@ open "TravelVid Recorder.xcworkspace"
 ```
 
 ### Required Capabilities (already configured)
-- Background Modes: Audio (keeps app alive in background)
+- Background Modes: None (no persistent background audio)
 - Camera usage permission
 - Microphone usage permission
 - Photo Library usage permission
@@ -172,18 +172,12 @@ func saveSelectedVideo(from: URL)    // Save video for playback mode
 - **Foreground Recovery**: Verifies recording when app returns from background
 
 ### 2. SafeRecordingHandler.swift
-**Keeps app alive in background** and handles file safety.
+Handles file safety and background task cleanup (no persistent background audio).
 
 #### Key Features
 ```swift
-// Silent audio keeps app running indefinitely in background
-private var silentAudioPlayer: AVAudioPlayer?
-
-func startBackgroundAudio()  // Start silent audio loop
-func stopBackgroundAudio()   // Stop silent audio
-
-func startRecordingSession(url: URL)  // Begin background task + audio
-func endRecordingSession()            // End background task + audio
+func startRecordingSession(url: URL)  // Begin background task
+func endRecordingSession()            // End background task
 
 func checkDiskSpace() -> (available: Int64, isLow: Bool)
 func verifyFileIntegrity(at url: URL) -> Bool
@@ -192,10 +186,8 @@ func cleanupCorruptedFiles(in directory: URL) async
 
 #### How Background Execution Works
 1. App enters background
-2. Silent audio (0.5s WAV at 0% volume) loops infinitely
-3. iOS sees app is "playing audio" and doesn't suspend it
-4. Recording continues indefinitely
-5. When recording stops, silent audio stops, app can suspend
+2. Background task grants limited time to finish writes
+3. If iOS suspends, recording may stop until app returns foreground
 
 ### 3. LocationManager.swift
 **GPS tracking with reverse geocoding.**
@@ -471,7 +463,7 @@ NotificationCenter.default.post(name: NSNotification.Name("EmergencyStopRecordin
 4. AVCaptureSession starts with selected resolution/camera
 5. `startRecording()` called:
    - Creates segment file URL
-   - Starts SafeRecordingHandler (background audio + task)
+   - Starts SafeRecordingHandler (background task)
    - Starts LocationManager tracking
    - Starts movieOutput recording
    - Starts segment timer
@@ -501,7 +493,7 @@ NotificationCenter.default.post(name: NSNotification.Name("EmergencyStopRecordin
    - Invalidates all timers
    - Stops movieOutput
    - Stops LocationManager
-   - Stops SafeRecordingHandler (background audio)
+   - Stops SafeRecordingHandler (background task)
 3. RecordingView dismissed
 4. MainView shows updated library
 
@@ -607,7 +599,7 @@ pod 'Google-Mobile-Ads-SDK'
 
 1. **Always test on physical device** - Camera doesn't work in simulator
 2. **Open .xcworkspace** not .xcodeproj (CocoaPods requirement)
-3. **Background audio mode is essential** - Without it, recording stops when backgrounded
+3. **Background audio mode removed** - Recording may pause in background per iOS limits
 4. **Segment length affects reliability** - Shorter segments = less data loss on crash
 5. **Thermal monitoring is critical** - iOS will kill camera access if device overheats
 6. **Location permission is "When In Use"** - GPS only tracks while app is active/recording
@@ -629,9 +621,8 @@ pod 'Google-Mobile-Ads-SDK'
 4. Check if segment was too short (<0.5s)
 
 ### Background Recording Fails
-1. Verify UIBackgroundModes includes "audio" in Info.plist
-2. Check silent audio player initialized
-3. Look for audio session interruption logs
+1. Verify UIBackgroundModes does not include "audio"
+2. Check background task logs
 4. Verify app wasn't force-quit by user
 
 ### Premium Not Working

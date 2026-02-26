@@ -368,9 +368,7 @@
 		</dict>
 	</array>
 	<key>UIBackgroundModes</key>
-	<array>
-		<string>audio</string>
-	</array>
+	<array/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>TravelVid Recorder needs your location to stamp GPS coordinates on your recordings. This helps document where incidents occurred for safety and security purposes.</string>
 	<key>NSUserTrackingUsageDescription</key>

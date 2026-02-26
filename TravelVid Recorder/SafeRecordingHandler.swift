@@ -10,18 +10,19 @@ class SafeRecordingHandler: NSObject {
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var activeRecordingURL: URL?
 
-    // Silent audio player to keep app alive in background
+    // Silent background audio disabled (App Store guideline 2.5.4)
     private var silentAudioPlayer: AVAudioPlayer?
     private var isBackgroundAudioActive = false
 
     private override init() {
         super.init()
         setupNotifications()
-        prepareSilentAudio()
     }
 
     // MARK: - Silent Audio Setup (Keeps App Alive in Background)
     private func prepareSilentAudio() {
+        // Background audio is disabled for App Store compliance.
+        return
         // Create a very short silent audio file in memory
         // This keeps the audio session active so iOS doesn't suspend us
         do {
@@ -71,6 +72,7 @@ class SafeRecordingHandler: NSObject {
     }
 
     func startBackgroundAudio() {
+        return
         guard !isBackgroundAudioActive else { return }
 
         // Ensure audio session is active before playing
@@ -97,6 +99,7 @@ class SafeRecordingHandler: NSObject {
     }
 
     func stopBackgroundAudio() {
+        return
         guard isBackgroundAudioActive else { return }
 
         silentAudioPlayer?.stop()
@@ -128,16 +131,11 @@ class SafeRecordingHandler: NSObject {
             object: nil
         )
 
-        // Monitor audio session interruptions to reclaim background life
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAudioSessionInterruption),
-            name: AVAudioSession.interruptionNotification,
-            object: nil
-        )
+        // Background audio is disabled; no audio interruption handling needed.
     }
     
     @objc private func handleAudioSessionInterruption(notification: Notification) {
+        return
         guard let userInfo = notification.userInfo,
               let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
@@ -168,13 +166,11 @@ class SafeRecordingHandler: NSObject {
     func startRecordingSession(url: URL) {
         activeRecordingURL = url
         startBackgroundTask()
-        startBackgroundAudio() // Keep app alive in background
     }
 
     @MainActor
     func endRecordingSession() {
         activeRecordingURL = nil
-        stopBackgroundAudio()
         endBackgroundTask()
     }
     
@@ -201,7 +197,7 @@ class SafeRecordingHandler: NSObject {
             if remainingTime != .greatestFiniteMagnitude && remainingTime.isFinite {
                 print("🕐 Background task started. Remaining time: \(Int(remainingTime))s")
             } else {
-                print("🕐 Background task started. Remaining time: unlimited (audio background mode)")
+                print("🕐 Background task started. Remaining time: unlimited")
             }
 
             // Note: We no longer auto-end the background task after 25s because:
@@ -222,24 +218,11 @@ class SafeRecordingHandler: NSObject {
     
     @MainActor
     private func handleBackgroundTimeout() {
-        // Background task is expiring - this means silent audio isn't working
-        print("⚠️ Background task expiring - attempting to keep recording alive")
-
-        // Try to restart silent audio
-        if let player = silentAudioPlayer, !player.isPlaying {
-            print("🔄 Restarting silent audio...")
-            player.play()
-        }
-
-        // We MUST end the background task to avoid iOS killing the app
-        // But if silent audio is working, the app will stay alive anyway
+        // Background task is expiring - end to avoid termination.
+        print("⚠️ Background task expiring - ending background task")
         endBackgroundTask()
 
-        // Request a new background task immediately
-        if activeRecordingURL != nil {
-            print("🔄 Requesting new background task...")
-            startBackgroundTask()
-        }
+        // Do not re-request background time without an eligible background mode.
     }
     
     // MARK: - App Lifecycle Handlers
@@ -266,15 +249,6 @@ class SafeRecordingHandler: NSObject {
     
     @MainActor @objc private func handleAppDidEnterBackground() {
         print("🌙 App entered background - maintaining background task")
-
-        // Verify silent audio is playing (critical for staying alive)
-        if let player = silentAudioPlayer {
-            if !player.isPlaying && activeRecordingURL != nil {
-                print("⚠️ Silent audio not playing in background - restarting")
-                player.play()
-            }
-            print("🔇 Silent audio status: isPlaying=\(player.isPlaying)")
-        }
 
         // Ensure we have background time
         if backgroundTaskID == .invalid {

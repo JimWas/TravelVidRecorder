@@ -491,6 +491,27 @@ struct MainView: View {
             DisclosureGroup(isExpanded: $showAdvancedSettings) {
                 VStack(spacing: 12) {
                     HStack(spacing: 12) {
+                        Image(systemName: "record.circle")
+                            .font(.title3)
+                            .foregroundColor(.red)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Status Indicator")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Show or hide the on-screen recording status indicator.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $manager.showRecordingIndicator)
+                            .labelsHidden()
+                            .tint(.red)
+                    }
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+
+                    HStack(spacing: 12) {
                         Image(systemName: "exclamationmark.bubble")
                             .font(.title3)
                             .foregroundColor(.orange)

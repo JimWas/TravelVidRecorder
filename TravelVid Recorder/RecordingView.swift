@@ -84,8 +84,8 @@ struct RecordingView: View {
                 cornerTapZones
             }
 
-            // Recording indicator (always shown while recording screen is active)
-            if !sessionFailed && !isPreparingSession {
+            // Recording indicator (configurable via Advanced Settings)
+            if manager.showRecordingIndicator && !sessionFailed && !isPreparingSession {
                 VStack {
                     HStack {
                         Spacer()

@@ -116,8 +116,8 @@ struct MainView: View {
             }
             
             // 3. Delete All
-            .alert("Delete ALL videos?", isPresented: $showDeleteAllAlert) {
-                Button("Delete All", role: .destructive) {
+            .alert("Delete \(manager.recordings.count) video(s)?", isPresented: $showDeleteAllAlert) {
+                Button("Delete \(manager.recordings.count) Video(s)", role: .destructive) {
                     manager.recordings.forEach { manager.deleteRecording($0) }
                 }
                 Button("Cancel", role: .cancel) {}

@@ -64,9 +64,27 @@ class AdMobManager: NSObject, ObservableObject {
         }
     }
     
-    func showInterstitialAd(completion: @escaping () -> Void) {
-        guard let root = rootVC, root.presentedViewController == nil else {
+    func showInterstitialAd(completion: @escaping () -> Void, attempt: Int = 0) {
+        guard let root = rootVC else {
             ensureSDKInitialized()
+            completion()
+            return
+        }
+
+        if root.presentedViewController != nil {
+            if attempt < 3 {
+                ensureSDKInitialized()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                    self?.showInterstitialAd(completion: completion, attempt: attempt + 1)
+                }
+                return
+            }
+            completion()
+            return
+        }
+
+        if interstitialID.isEmpty {
+            print("Interstitial ID is empty. Check Config.plist.")
             completion()
             return
         }
@@ -79,7 +97,13 @@ class AdMobManager: NSObject, ObservableObject {
 
         // Start loading for next attempt while keeping UX non-blocking.
         print("Interstitial ad wasn't ready.")
-        ensureSDKInitialized()
+        if !isSDKInitialized {
+            ensureSDKInitialized { [weak self] in
+                self?.showInterstitialAd(completion: completion, attempt: attempt + 1)
+            }
+            return
+        }
+        loadInterstitial()
         completion()
     }
 

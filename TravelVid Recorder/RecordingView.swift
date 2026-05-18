@@ -67,6 +67,23 @@ struct RecordingView: View {
                 // Calculator
                 CalculatorView()
                     .ignoresSafeArea(.all)
+
+            case .ledBanner:
+                LEDBannerView(
+                    text: manager.ledBannerText,
+                    useNasalization: manager.ledBannerUseNasalization,
+                    speed: manager.ledBannerSpeed,
+                    isPreview: false
+                )
+                .ignoresSafeArea(.all)
+
+            case .currencyConverter:
+                CurrencyConverterView(
+                    amountText: $manager.converterAmount,
+                    base: $manager.converterBase,
+                    isPreview: false
+                )
+                .ignoresSafeArea(.all)
             }
 
             // POPUP (only if enabled)

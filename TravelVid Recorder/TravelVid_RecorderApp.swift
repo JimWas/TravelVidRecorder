@@ -34,6 +34,7 @@ struct TravelVid_RecorderApp: App {
             }
             .task {
                 await requestTrackingPermission()
+                NotificationManager.shared.requestAuthorizationIfNeeded()
             }
             .onChange(of: scenePhase, initial: false) { _, newPhase in
                 switch newPhase {
@@ -41,6 +42,7 @@ struct TravelVid_RecorderApp: App {
                     isInactive = true
                 case .active:
                     isInactive = false
+                    NotificationManager.shared.clearUnsavedVideosNotification()
                 @unknown default:
                     break
                 }
@@ -60,7 +62,8 @@ struct TravelVid_RecorderApp: App {
             await ATTrackingManager.requestTrackingAuthorization()
         }
 
-        // AdMob now initializes lazily when an ad is first requested.
+        // Initialize AdMob after ATT flow completes.
+        AdMobManager.shared.initializeAdMob()
     }
 
     private func setupAudioSession() {

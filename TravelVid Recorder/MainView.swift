@@ -1,11 +1,14 @@
 import SwiftUI
 import PhotosUI
 import MapKit
+import StoreKit
 
 struct MainView: View {
     @StateObject private var manager = RecordingManager()
     @StateObject private var locationManager = LocationManager.shared
     @StateObject private var subscriptionManager = SubscriptionManager.shared
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     
     // MARK: - UI States
     @State private var coverImageData: Data?
@@ -13,6 +16,7 @@ struct MainView: View {
     @State private var videoPickerItem: PhotosPickerItem?
     @State private var isLoadingVideo = false
     @State private var showRecorder = false
+    @State private var showOnboarding = false
     
     // Selection & Deletion
     @State private var selectMode = false
@@ -20,6 +24,8 @@ struct MainView: View {
     @State private var showDeleteAllAlert = false
     @State private var showDeleteSelectedAlert = false
     @State private var showPaywall = false
+    @State private var isShowingOfferCodeRedemption = false
+    @State private var showSubscriptionError = false
     
     // Export States
     @State private var showExportAllAlert = false
@@ -30,11 +36,9 @@ struct MainView: View {
     @State private var showAdvancedSettings = false
     
     // Map State
-    @State private var showMap = false
     @State private var selectedMapRecording: Recording?
 
     // Video Preview State
-    @State private var showVideoPreview = false
     @State private var previewRecording: Recording?
     
     var coverImage: UIImage? {
@@ -84,12 +88,29 @@ struct MainView: View {
             .navigationTitle("")
             .navigationBarHidden(true)
             .onAppear {
-                locationManager.requestPermission()
+                AdMobManager.shared.initializeAdMob()
+                if !hasCompletedOnboarding {
+                    showOnboarding = true
+                }
+            }
+            .onChange(of: scenePhase, initial: false) { _, newPhase in
+                switch newPhase {
+                case .inactive, .background:
+                    NotificationManager.shared.scheduleUnsavedVideosNotification(count: manager.recordings.count)
+                case .active:
+                    NotificationManager.shared.clearUnsavedVideosNotification()
+                @unknown default:
+                    break
+                }
             }
 
             // Present Recording View
             .fullScreenCover(isPresented: $showRecorder) {
                 RecordingView(manager: manager, coverImage: coverImage)
+                    .interactiveDismissDisabled(true)
+            }
+            .fullScreenCover(isPresented: $showOnboarding) {
+                OnboardingView(isPresented: $showOnboarding, stopGesture: manager.stopGesture)
                     .interactiveDismissDisabled(true)
             }
             .sheet(isPresented: $showPaywall) {
@@ -134,19 +155,36 @@ struct MainView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             }
-
-            // Full Map Sheet
-            .sheet(isPresented: $showMap) {
-                if let rec = selectedMapRecording {
-                    FullMapView(recording: rec)
+            .alert("Subscription", isPresented: $showSubscriptionError) {
+                Button("OK", role: .cancel) {
+                    subscriptionManager.purchaseError = nil
+                }
+            } message: {
+                Text(subscriptionManager.purchaseError ?? "Something went wrong while redeeming your offer code.")
+            }
+            .offerCodeRedemption(isPresented: $isShowingOfferCodeRedemption) { result in
+                switch result {
+                case .success:
+                    Task {
+                        await subscriptionManager.refreshAfterOfferCodeRedemption()
+                        if subscriptionManager.purchaseError != nil {
+                            showSubscriptionError = true
+                        }
+                    }
+                case .failure(let error):
+                    subscriptionManager.purchaseError = "Offer code redemption failed: \(error.localizedDescription)"
+                    showSubscriptionError = true
                 }
             }
 
+            // Full Map Sheet
+            .sheet(item: $selectedMapRecording) { rec in
+                FullMapView(recording: rec)
+            }
+
             // Video Preview Sheet
-            .sheet(isPresented: $showVideoPreview) {
-                if let rec = previewRecording {
-                    VideoPreviewView(recording: rec)
-                }
+            .sheet(item: $previewRecording) { rec in
+                VideoPreviewView(recording: rec)
             }
         }
         // Load Image Task
@@ -288,6 +326,23 @@ struct MainView: View {
 
                 case .calculator:
                     placeholderView(icon: "plus.forwardslash.minus", text: "Calculator Mode Active", color: .gray)
+
+                case .ledBanner:
+                    LEDBannerView(
+                        text: manager.ledBannerText,
+                        useNasalization: manager.ledBannerUseNasalization,
+                        speed: manager.ledBannerSpeed,
+                        isPreview: true
+                    )
+                    .frame(height: 220)
+
+                case .currencyConverter:
+                    CurrencyConverterView(
+                        amountText: $manager.converterAmount,
+                        base: $manager.converterBase,
+                        isPreview: true
+                    )
+                    .frame(height: 220)
                 }
 
                 // Overlay Button for Image Picker
@@ -342,6 +397,33 @@ struct MainView: View {
                                 .textFieldStyle(.roundedBorder)
                                 .frame(maxWidth: 200)
                                 .padding(10)
+                        }
+                    }
+                }
+
+                if manager.recordingDisplayMode == .currencyConverter {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 8) {
+                                Picker("Direction", selection: $manager.converterBase) {
+                                    ForEach(CurrencyConverterBase.allCases) { option in
+                                        Text(option.rawValue).tag(option)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(10)
+
+                                TextField("Amount", text: $manager.converterAmount)
+                                    .keyboardType(.decimalPad)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(maxWidth: 150)
+                            }
+                            .padding(10)
                         }
                     }
                 }
@@ -531,6 +613,56 @@ struct MainView: View {
                     .padding(12)
                     .background(Color(uiColor: .secondarySystemBackground))
                     .cornerRadius(12)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "textformat")
+                                .font(.title3)
+                                .foregroundColor(.green)
+                                .frame(width: 28)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text("LED Banner")
+                                        .font(.subheadline.weight(.semibold))
+                                    if !subscriptionManager.isPremium {
+                                        Image(systemName: "lock.fill")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                Text("Displays your custom text in LED marquee style.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+
+                        TextField("Banner text", text: $manager.ledBannerText, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                            .lineLimit(2)
+
+                        Toggle("Use Nasalization font", isOn: $manager.ledBannerUseNasalization)
+                            .tint(.green)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Scroll Speed")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text("\(Int(manager.ledBannerSpeed)) px/s")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Slider(value: $manager.ledBannerSpeed, in: 10...120, step: 5)
+                                .tint(.green)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+                    .disabled(!subscriptionManager.isPremium)
+                    .opacity(subscriptionManager.isPremium ? 1 : 0.6)
                 }
                 .padding(.top, 8)
             } label: {
@@ -555,15 +687,22 @@ struct MainView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(subscriptionManager.isPremium ? "TravelVid Premium Active" : "TravelVid Premium")
                     .font(.subheadline.weight(.semibold))
-                Text(subscriptionManager.isPremium ? "Manage subscription and restore purchases" : "Unlock premium cover modes")
+                Text(subscriptionManager.isPremium ? "Manage subscription and restore purchases" : "Unlock Fake Call, Bitcoin, LED Banner, Currency Converter, and more")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             Spacer()
-            Button(subscriptionManager.isPremium ? "Manage" : "Go Premium") {
-                showPaywall = true
+            VStack(alignment: .trailing, spacing: 8) {
+                Button(subscriptionManager.isPremium ? "Manage" : "Go Premium") {
+                    showPaywall = true
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Redeem Code") {
+                    isShowingOfferCodeRedemption = true
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
         }
         .padding()
         .background(Color.white)
@@ -675,7 +814,20 @@ struct MainView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
             
-            if manager.recordings.isEmpty {
+            if manager.isLoadingRecordings {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                    Text("Loading recordings...")
+                        .font(.headline)
+                    Text("Your saved videos are still being scanned.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+            } else if manager.recordings.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "video.slash")
                         .font(.largeTitle)
@@ -710,7 +862,6 @@ struct MainView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .onTapGesture {
                         selectedMapRecording = rec
-                        showMap = true
                     }
             } else {
                 ZStack {
@@ -815,13 +966,11 @@ struct MainView: View {
     private func attemptOpenPreview(for rec: Recording) {
         if subscriptionManager.isPremium {
             previewRecording = rec
-            showVideoPreview = true
             return
         }
 
         AdMobManager.shared.showInterstitialAd {
             previewRecording = rec
-            showVideoPreview = true
         }
     }
     private func exportAllWithConfirmation() {

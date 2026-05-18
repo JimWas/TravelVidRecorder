@@ -1,4 +1,5 @@
 import SwiftUI
+import StoreKit
 
 struct PaywallView: View {
     @ObservedObject var subscriptionManager = SubscriptionManager.shared
@@ -6,10 +7,13 @@ struct PaywallView: View {
     @State private var isPurchasing = false
     @State private var showError = false
     @State private var isEligibleForTrial = false
+    @State private var isShowingOfferCodeRedemption = false
 
     private let features: [(icon: String, title: String)] = [
         ("play.rectangle.fill", "Video Playback Mode"),
         ("phone.fill", "Fake Call Mode"),
+        ("textformat", "LED Banner Mode"),
+        ("coloncurrencysign.circle.fill", "Currency Converter Mode"),
         ("bird.fill", "Flappy Bird Mode"),
         ("bitcoinsign.circle.fill", "Bitcoin Price Mode"),
         ("plus.forwardslash.minus", "Calculator Mode"),
@@ -29,11 +33,45 @@ struct PaywallView: View {
                         Text("TravelVid Premium")
                             .font(.title.bold())
 
-                        Text("Unlock premium recording modes")
+                        Text("Unlock every premium recording mode")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+
+                        Text("Includes decoy tools like Fake Call, Bitcoin, LED Banner, Currency Converter, and more.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 28)
                     }
                     .padding(.top, 20)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Premium Mode Previews")
+                            .font(.headline)
+                            .padding(.horizontal)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 14) {
+                                PremiumPreviewCard(title: "Fake Call") {
+                                    FakeCallingView(contactName: "Airport Pickup")
+                                }
+
+                                PremiumPreviewCard(title: "LED Banner") {
+                                    LEDBannerView(
+                                        text: "WELCOME TO SAIGON",
+                                        useNasalization: true,
+                                        speed: 40,
+                                        isPreview: true
+                                    )
+                                }
+
+                                PremiumPreviewCard(title: "Currency Converter") {
+                                    PremiumCurrencyPreview()
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
 
                     // Feature list
                     VStack(alignment: .leading, spacing: 16) {
@@ -79,6 +117,11 @@ struct PaywallView: View {
                             }
 
                             Text("Auto-renewable subscription. Cancel anytime in Settings.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+
+                            Text("Premium also removes interstitial ads before exports and preview opens.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -139,6 +182,11 @@ struct PaywallView: View {
                     .disabled(isPurchasing)
                     .padding(.horizontal)
 
+                    Button("Redeem Offer Code") {
+                        isShowingOfferCodeRedemption = true
+                    }
+                    .buttonStyle(.bordered)
+
                     // Restore
                     Button("Restore Purchases") {
                         Task {
@@ -180,6 +228,22 @@ struct PaywallView: View {
             } message: {
                 Text(subscriptionManager.purchaseError ?? "An unknown error occurred.")
             }
+            .offerCodeRedemption(isPresented: $isShowingOfferCodeRedemption) { result in
+                switch result {
+                case .success:
+                    Task {
+                        await subscriptionManager.refreshAfterOfferCodeRedemption()
+                        if subscriptionManager.isPremium {
+                            dismiss()
+                        } else if subscriptionManager.purchaseError != nil {
+                            showError = true
+                        }
+                    }
+                case .failure(let error):
+                    subscriptionManager.purchaseError = "Offer code redemption failed: \(error.localizedDescription)"
+                    showError = true
+                }
+            }
             .task {
                 if subscriptionManager.products.isEmpty {
                     await subscriptionManager.loadProducts()
@@ -187,5 +251,36 @@ struct PaywallView: View {
                 isEligibleForTrial = await subscriptionManager.isEligibleForIntroOffer()
             }
         }
+    }
+}
+
+private struct PremiumPreviewCard<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content
+                .frame(width: 190, height: 210)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            HStack(spacing: 6) {
+                Image(systemName: "star.fill")
+                    .font(.caption)
+                    .foregroundStyle(.yellow)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+        }
+    }
+}
+
+private struct PremiumCurrencyPreview: View {
+    @State private var amount = "100"
+    @State private var base: CurrencyConverterBase = .usdToVnd
+
+    var body: some View {
+        CurrencyConverterView(amountText: $amount, base: $base, isPreview: true)
     }
 }

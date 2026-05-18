@@ -4,6 +4,10 @@
 <dict>
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-3057383894764696~2364968487</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Nasalization.otf</string>
+	</array>
 	<key>SKAdNetworkItems</key>
 	<array>
 		<dict>
@@ -369,8 +373,16 @@
 	</array>
 	<key>UIBackgroundModes</key>
 	<array/>
+	<key>NSCameraUsageDescription</key>
+	<string>TravelVid Recorder uses the camera to record video while you travel. Example: capturing a safety incident with a visible recording indicator.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>TravelVid Recorder uses the microphone to record audio with your video. Example: capturing conversations or ambient sound during an incident.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TravelVid Recorder needs photo library access so you can save recorded videos. Example: exporting a recording to Photos for backup.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>TravelVid Recorder adds recordings to your Photo Library when you choose Export. Example: saving a clip to Photos to share with authorities.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>TravelVid Recorder needs your location to stamp GPS coordinates on your recordings. This helps document where incidents occurred for safety and security purposes.</string>
+	<string>TravelVid Recorder uses your location to tag recordings with GPS coordinates. Example: showing where a safety incident happened on a map.</string>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>This app uses tracking to provide personalized ads. Your data helps support free app features.</string>
 </dict>

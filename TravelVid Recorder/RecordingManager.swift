@@ -50,6 +50,8 @@ enum RecordingDisplayMode: String, CaseIterable, Identifiable {
     case flappyBird = "Flappy Bird"
     case bitcoin = "Bitcoin Price"
     case calculator = "Calculator"
+    case ledBanner = "LED Banner"
+    case currencyConverter = "Currency Converter"
 
     var id: String { rawValue }
 
@@ -58,10 +60,17 @@ enum RecordingDisplayMode: String, CaseIterable, Identifiable {
         switch self {
         case .coverImage, .tetris:
             return false
-        case .videoPlayback, .fakeCall, .flappyBird, .bitcoin, .calculator:
+        case .videoPlayback, .fakeCall, .flappyBird, .bitcoin, .calculator, .ledBanner, .currencyConverter:
             return true
         }
     }
+}
+
+enum CurrencyConverterBase: String, CaseIterable, Identifiable {
+    case usdToVnd = "USD to VND"
+    case vndToUsd = "VND to USD"
+
+    var id: String { rawValue }
 }
 
 // MARK: - Stop Recording Gesture
@@ -126,6 +135,7 @@ class RecordingManager: NSObject, ObservableObject {
 
     @Published var isRecording = false
     @Published var recordings: [Recording] = []
+    @Published var isLoadingRecordings = true
     @Published var segmentLength: TimeInterval = 120
     @Published var selectedResolution: Resolution = .p1080
     @Published var audioOn = true
@@ -150,6 +160,31 @@ class RecordingManager: NSObject, ObservableObject {
             UserDefaults.standard.set(fakeCallContactName, forKey: "fakeCallContactName")
         }
     }
+    @Published var ledBannerText: String = "RECORDING" {
+        didSet {
+            UserDefaults.standard.set(ledBannerText, forKey: "ledBannerText")
+        }
+    }
+    @Published var ledBannerUseNasalization: Bool = true {
+        didSet {
+            UserDefaults.standard.set(ledBannerUseNasalization, forKey: "ledBannerUseNasalization")
+        }
+    }
+    @Published var ledBannerSpeed: Double = 40 {
+        didSet {
+            UserDefaults.standard.set(ledBannerSpeed, forKey: "ledBannerSpeed")
+        }
+    }
+    @Published var converterBase: CurrencyConverterBase = .usdToVnd {
+        didSet {
+            UserDefaults.standard.set(converterBase.rawValue, forKey: "converterBase")
+        }
+    }
+    @Published var converterAmount: String = "100" {
+        didSet {
+            UserDefaults.standard.set(converterAmount, forKey: "converterAmount")
+        }
+    }
     @Published var stealthBrightness: Bool = false {
         didSet {
             UserDefaults.standard.set(stealthBrightness, forKey: "stealthBrightness")
@@ -161,9 +196,11 @@ class RecordingManager: NSObject, ObservableObject {
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
 
-    private var segmentTimer: Timer?
+    private var segmentTimer: DispatchSourceTimer?
+    private let segmentTimerQueue = DispatchQueue(label: "com.jimwas.travelvid.segmentTimer")
     private var isSegmenting = false
     private var activeSegmentURL: URL?
+    private var activeSegmentStartedAt: Date?
     private var recordingLocation: CLLocation?
     private var recordingPath: [LocationPoint] = []
 
@@ -188,8 +225,24 @@ class RecordingManager: NSObject, ObservableObject {
         if let savedContactName = UserDefaults.standard.string(forKey: "fakeCallContactName") {
             fakeCallContactName = savedContactName
         }
+        if let savedBannerText = UserDefaults.standard.string(forKey: "ledBannerText") {
+            ledBannerText = savedBannerText
+        }
         if UserDefaults.standard.object(forKey: "showRecordingIndicator") != nil {
             showRecordingIndicator = UserDefaults.standard.bool(forKey: "showRecordingIndicator")
+        }
+        if UserDefaults.standard.object(forKey: "ledBannerUseNasalization") != nil {
+            ledBannerUseNasalization = UserDefaults.standard.bool(forKey: "ledBannerUseNasalization")
+        }
+        if UserDefaults.standard.object(forKey: "ledBannerSpeed") != nil {
+            ledBannerSpeed = UserDefaults.standard.double(forKey: "ledBannerSpeed")
+        }
+        if let savedConverterBase = UserDefaults.standard.string(forKey: "converterBase"),
+           let converterBase = CurrencyConverterBase(rawValue: savedConverterBase) {
+            self.converterBase = converterBase
+        }
+        if let savedConverterAmount = UserDefaults.standard.string(forKey: "converterAmount") {
+            converterAmount = savedConverterAmount
         }
         if UserDefaults.standard.object(forKey: "stealthBrightness") != nil {
             stealthBrightness = UserDefaults.standard.bool(forKey: "stealthBrightness")
@@ -444,7 +497,7 @@ class RecordingManager: NSObject, ObservableObject {
         print("🚨 Emergency stop - forcing immediate save")
         if isRecording {
             isRecording = false
-            segmentTimer?.invalidate()
+            stopSegmentTimer()
             
             // Force synchronous stop
             movieOutput?.stopRecording()
@@ -650,8 +703,10 @@ class RecordingManager: NSObject, ObservableObject {
         guard let output = movieOutput else { return }
 
         isRecording = true
+        isSegmenting = false
         let url = nextURL()
         activeSegmentURL = url
+        activeSegmentStartedAt = Date()
 
         // IMPORTANT: Start background audio BEFORE anything else
         // This must happen while app is in foreground to be effective
@@ -695,7 +750,8 @@ class RecordingManager: NSObject, ObservableObject {
         guard isRecording else { return }
         isRecording = false
 
-        segmentTimer?.invalidate()
+        stopSegmentTimer()
+        activeSegmentStartedAt = nil
         watchdogTimer?.invalidate()
         diskSpaceTimer?.invalidate()
         movieOutput?.stopRecording()
@@ -709,18 +765,32 @@ class RecordingManager: NSObject, ObservableObject {
 
     // MARK: - Segmentation
     private func startSegmentTimer() {
-        segmentTimer?.invalidate()
+        stopSegmentTimer()
 
-        segmentTimer = Timer.scheduledTimer(withTimeInterval: segmentLength, repeats: true) { [weak self] _ in
+        let timer = DispatchSource.makeTimerSource(queue: segmentTimerQueue)
+        timer.schedule(deadline: .now() + segmentLength, leeway: .seconds(1))
+        timer.setEventHandler { [weak self] in
             guard let self else { return }
-            Task { @MainActor in self.rotateSegment() }
+            Task { @MainActor in
+                self.rotateSegment()
+            }
         }
+        segmentTimer = timer
+        timer.resume()
     }
 
     private func rotateSegment() {
         guard isRecording, !isSegmenting else { return }
         isSegmenting = true
+        stopSegmentTimer()
         movieOutput?.stopRecording()
+    }
+
+    private func stopSegmentTimer() {
+        guard let timer = segmentTimer else { return }
+        segmentTimer = nil
+        timer.setEventHandler {}
+        timer.cancel()
     }
 
     // MARK: - Watchdog Timer (Detects Silent Recording Failures)
@@ -760,6 +830,16 @@ class RecordingManager: NSObject, ObservableObject {
             let url = nextURL()
             activeSegmentURL = url
             output.startRecording(to: url, recordingDelegate: self)
+        }
+
+        // Timer-based rotation can occasionally be delayed when the recorder is busy.
+        // Use the actual segment start timestamp as a backstop so recordings still split.
+        if let segmentStartedAt = activeSegmentStartedAt,
+           !isSegmenting,
+           Date().timeIntervalSince(segmentStartedAt) >= segmentLength + 5 {
+            print("⏱️ Watchdog forcing overdue segment rotation")
+            rotateSegment()
+            return
         }
 
         // Log stats less frequently to reduce debug console overhead.
@@ -916,13 +996,19 @@ class RecordingManager: NSObject, ObservableObject {
 
     // MARK: - Load existing
     private func loadRecordings() async {
+        isLoadingRecordings = true
         let fm = FileManager.default
         let dir = directory()
 
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey, .fileSizeKey])
-        else { return }
+        else {
+            recordings = []
+            isLoadingRecordings = false
+            return
+        }
 
         var list: [Recording] = []
+        let metadataByFilename = loadMetadata()
 
         for url in files where url.pathExtension.lowercased() == "mov" {
             let attr = try? fm.attributesOfItem(atPath: url.path)
@@ -944,7 +1030,7 @@ class RecordingManager: NSObject, ObservableObject {
             }
 
             // Load GPS metadata if available
-            let metadata = getRecordingMetadata(filename: url.lastPathComponent)
+            let metadata = metadataByFilename[url.lastPathComponent]
 
             list.append(Recording(name: url.lastPathComponent,
                                   duration: duration,
@@ -958,6 +1044,7 @@ class RecordingManager: NSObject, ObservableObject {
         }
 
         recordings = list.sorted { ($0.creation ?? .distantPast) > ($1.creation ?? .distantPast) }
+        isLoadingRecordings = false
     }
 
     // MARK: - Export
@@ -1034,6 +1121,7 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
                     // Clean up failed recording file
                     try? FileManager.default.removeItem(at: outputFileURL)
                     self.isSegmenting = false
+                    self.activeSegmentStartedAt = nil
                     SafeRecordingHandler.shared.endRecordingSession()
                     return
                 }
@@ -1043,6 +1131,7 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
             guard FileManager.default.fileExists(atPath: outputFileURL.path) else {
                 print("❌ Recording file doesn't exist: \(outputFileURL.lastPathComponent)")
                 self.isSegmenting = false
+                self.activeSegmentStartedAt = nil
                 return
             }
 
@@ -1064,8 +1153,12 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
                 // Try to restart recording if we're still supposed to be recording
                 if self.isRecording {
                     let newURL = self.nextURL()
+                    self.activeSegmentStartedAt = Date()
                     output.startRecording(to: newURL, recordingDelegate: self)
                     self.activeSegmentURL = newURL
+                    self.startSegmentTimer()
+                } else {
+                    self.activeSegmentStartedAt = nil
                 }
                 return
             }
@@ -1114,11 +1207,15 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
 
             if self.isRecording {
                 let newURL = self.nextURL()
+                self.activeSegmentStartedAt = Date()
                 output.startRecording(to: newURL, recordingDelegate: self)
-                self.isSegmenting = false
                 self.activeSegmentURL = newURL
+                self.isSegmenting = false
+                self.startSegmentTimer()
             } else {
                 // Recording stopped - end background task immediately
+                self.activeSegmentStartedAt = nil
+                self.isSegmenting = false
                 SafeRecordingHandler.shared.endRecordingSession()
             }
         }

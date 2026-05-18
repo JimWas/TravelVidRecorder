@@ -21,8 +21,7 @@ class SafeRecordingHandler: NSObject {
 
     // MARK: - Silent Audio Setup (Keeps App Alive in Background)
     private func prepareSilentAudio() {
-        // Background audio is disabled for App Store compliance.
-        return
+        #if ENABLE_BACKGROUND_AUDIO
         // Create a very short silent audio file in memory
         // This keeps the audio session active so iOS doesn't suspend us
         do {
@@ -69,10 +68,11 @@ class SafeRecordingHandler: NSObject {
         } catch {
             print("⚠️ Failed to prepare silent audio: \(error)")
         }
+        #endif
     }
 
     func startBackgroundAudio() {
-        return
+        #if ENABLE_BACKGROUND_AUDIO
         guard !isBackgroundAudioActive else { return }
 
         // Ensure audio session is active before playing
@@ -96,15 +96,17 @@ class SafeRecordingHandler: NSObject {
         } else {
             print("⚠️ Failed to start background audio!")
         }
+        #endif
     }
 
     func stopBackgroundAudio() {
-        return
+        #if ENABLE_BACKGROUND_AUDIO
         guard isBackgroundAudioActive else { return }
 
         silentAudioPlayer?.stop()
         isBackgroundAudioActive = false
         print("🔇 Background audio stopped")
+        #endif
     }
     
     // MARK: - Setup Notifications
@@ -135,7 +137,7 @@ class SafeRecordingHandler: NSObject {
     }
     
     @objc private func handleAudioSessionInterruption(notification: Notification) {
-        return
+        #if ENABLE_BACKGROUND_AUDIO
         guard let userInfo = notification.userInfo,
               let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
@@ -159,6 +161,7 @@ class SafeRecordingHandler: NSObject {
         @unknown default:
             break
         }
+        #endif
     }
     
     // MARK: - Recording Session Management

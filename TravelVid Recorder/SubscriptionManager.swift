@@ -136,6 +136,15 @@ class SubscriptionManager: ObservableObject {
         }
     }
 
+    func refreshAfterOfferCodeRedemption() async {
+        do {
+            try await AppStore.sync()
+            await updateSubscriptionStatus()
+        } catch {
+            purchaseError = "Code redemption refresh failed: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Subscription Status
 
     func updateSubscriptionStatus() async {

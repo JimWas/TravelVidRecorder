@@ -1,43 +1,168 @@
 # TravelVid Recorder
-Reliable video capture for travelers who want peace of mind.
 
-**TravelVid Recorder** records video while showing a cover screen, helping you document your surroundings with clear recording status. It’s built for travel safety and low‑friction capture when you want to stay focused on what matters.
+> Discreet, reliable video recording for travelers who need peace of mind.
 
-**Get it on the iOS App Store**  
-Purchase the premium experience directly in the app to unlock all decoy modes and advanced features.
+TravelVid Recorder captures video in the background while displaying a convincing cover screen — a fake phone call, a working game, a world clock, a calculator, and more. Built for personal safety and travel documentation, it records continuously without anyone knowing.
 
-## Why Travelers Choose TravelVid Recorder
-- **Clear recording status** with always‑visible indicator
-- **Reliable capture** even during interruptions
-- **Fast recovery** with safe file handling
-- **Simple export** to your Photos library
+---
 
-## Standout Features
-- **Cover modes**: Cover Image, Fake Call, Tetris, Flappy Bird, Bitcoin Tracker, Calculator
-- **Recording controls**: Customizable stop gestures and alerts
-- **Pro‑grade recording**: 720p / 1080p / 4K, front/back camera, ultra‑wide lens support
-- **Safety & durability**: Auto‑segmentation, disk‑space monitoring, watchdog checks
-- **Location tagging**: Optional GPS capture with map preview
+## Features
 
-## Who It’s For
-- Travelers who want reliable documentation
-- Vloggers capturing B‑roll with clear recording status
-- Personal security use in public spaces
+### Decoy Modes
+Keep recording while your screen shows something completely unrelated.
 
-## Compatibility
+| Mode | Free | Premium |
+|------|:----:|:-------:|
+| Cover Image | ✓ | ✓ |
+| Tetris | ✓ | ✓ |
+| Video Playback | | ✓ |
+| Fake Phone Call | | ✓ |
+| Flappy Bird | | ✓ |
+| Bitcoin Price Tracker | | ✓ |
+| Calculator | | ✓ |
+| LED Banner | | ✓ |
+| Currency Converter | | ✓ |
+| World Clock | | ✓ |
+
+### Recording
+- **Resolutions**: 720p, 1080p, 4K
+- **Cameras**: Front, Back (Wide + Ultra-Wide)
+- **Auto-segmentation**: splits recordings into configurable chunks (1–10 min) so no data is lost on interruption
+- **Stabilization**: optional video stabilization
+- **Audio toggle**: record with or without audio
+- **Watchdog**: background timer verifies recording is active every 10 seconds and auto-recovers if it stalls
+
+### Stop Gestures
+Discreetly stop recording without it being obvious.
+- 4 or 5 taps anywhere on screen
+- Swipe down, left, or right
+- 5 taps in top-left or top-right corner
+- Tap and hold (1–10 seconds, configurable)
+
+### Storage & Safety
+- Live **storage indicator** on the main screen showing free vs. used space, color-coded green → orange → red
+- **Disk space checks** before saving or exporting — alerts you if there isn't enough room
+- **Quick-delete after export** — after saving to Photos, offers to remove the in-app copy to free space
+- **Honest export results** — clearly tells you if some or all videos failed to save so nothing is lost silently
+- Auto-stops recording if disk space drops below 100 MB
+
+### GPS & Location
+- Optional GPS tracking during recording
+- Reverse-geocoded address saved with each video
+- GPS path recorded and viewable on a full-screen map
+- Location data embedded in exported videos
+
+### Library
+- Thumbnail grid of all recordings
+- Tap to preview with full playback controls
+- Tap map thumbnail to open full GPS path view
+- Multi-select for batch export or delete
+- Export progress bar with live X-of-Y counter
+
+### Premium
+- Unlock all decoy modes
+- Ad-free video exports
+- **$3.99/month** with a **2-week free trial**
+- Promo code redemption built-in
+
+---
+
+## Requirements
+
 - iOS 15.0+
-- Camera, microphone, and Photos permissions required
-- Location access optional (for GPS tagging)
+- Physical device required (camera does not work in Simulator)
+- Permissions: Camera, Microphone, Photos Library
+- Location permission optional (for GPS tagging)
 
-## Legal & Ethical Use
-TravelVid Recorder is intended for lawful, personal‑safety use. Always follow local laws and obtain consent where required.
+---
 
 ## Build From Source
-1. Clone the repo
-2. Open `TravelVid Recorder.xcworkspace`
-3. Configure signing & capabilities
-4. Enable Background Modes → Audio, AirPlay, Picture in Picture
-5. Build and run on a physical device
+
+### Prerequisites
+- Xcode with SwiftUI support
+- CocoaPods installed (`brew install cocoapods`)
+
+### Setup
+
+```bash
+git clone https://github.com/JimWas/TravelVidRecorder.git
+cd TravelVidRecorder/TravelVid\ Recorder
+pod install
+open "TravelVid Recorder.xcworkspace"
+```
+
+Then in Xcode:
+1. Select your development team under **Signing & Capabilities**
+2. Connect a physical iOS device
+3. Build and run
+
+> **Important:** Always open the `.xcworkspace` file, not `.xcodeproj`.
+
+### Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| Google-Mobile-Ads-SDK | AdMob interstitial & rewarded ads |
+
+### Frameworks Used
+
+- `AVFoundation` — video recording
+- `CoreLocation` — GPS tracking
+- `StoreKit` — in-app subscriptions
+- `PhotosUI` — photo/video picker & export
+- `MapKit` — GPS map display
+- `AVKit` — video playback
+
+---
+
+## Architecture
+
+```
+TravelVid Recorder/
+├── TravelVid_RecorderApp.swift     # App entry point
+├── MainView.swift                   # Main screen — settings, library, controls
+├── RecordingView.swift              # Full-screen recording + decoy UI
+├── RecordingManager.swift           # Core recording logic (AVFoundation)
+├── SafeRecordingHandler.swift       # File safety, background tasks, disk checks
+├── LocationManager.swift            # GPS tracking + reverse geocoding
+├── SubscriptionManager.swift        # StoreKit v2 subscriptions + promo codes
+├── AdMobManager.swift               # Google AdMob ads
+├── HardwareButtonBlocker.swift      # Volume button interception during recording
+├── PaywallView.swift                # Premium subscription UI
+├── FakeCallingView.swift            # Fake phone call decoy
+├── TetrisGame.swift                 # Playable Tetris
+├── FlappyBirdView.swift             # Playable Flappy Bird
+├── CalculatorView.swift             # Functional calculator
+├── BitcoinPriceView.swift           # Bitcoin price tracker
+├── WorldClockView.swift             # Live world clock (44 cities)
+├── LoopingVideoPlayerView.swift     # Seamless looping video player
+└── Assets.xcassets/                 # App icons, images
+```
+
+**Design pattern**: `@MainActor` singleton managers observed by SwiftUI views via `@StateObject` / `@ObservedObject`. Fully reactive with `@Published` properties.
+
+---
+
+## Reliability
+
+TravelVid Recorder is built to keep recording even under adverse conditions:
+
+- **Watchdog timer** — verifies recording is active every 10 seconds, restarts if stalled
+- **Thermal monitoring** — forces segment save at "serious" heat, stops at "critical"
+- **Memory pressure** — forces segment save on low memory warning
+- **Disk space monitor** — warns at <500 MB, forces segment save at <250 MB, stops at <100 MB
+- **Session interruption handling** — detects camera/audio interruptions, auto-recovers
+- **Foreground recovery** — verifies recording state when app returns from background
+- **Short segments** — configurable segment length minimizes data loss on crash
+
+---
+
+## Legal & Ethical Use
+
+TravelVid Recorder is intended for lawful personal safety and documentation use. You are solely responsible for complying with all applicable laws in your jurisdiction, including those governing recording consent. Always obtain consent where required by law.
+
+---
 
 ## Support
-If you have issues or feature requests, open a GitHub issue. We welcome thoughtful contributions.
+
+Open a [GitHub Issue](https://github.com/JimWas/TravelVidRecorder/issues) for bug reports or feature requests.

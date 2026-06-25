@@ -13,6 +13,13 @@ struct MainView: View {
     // MARK: - UI States
     @State private var coverImageData: Data?
     @State private var pickerItem: PhotosPickerItem?
+
+    // Persisted cover image helpers
+    private static let coverImageFilename = "cover_image.jpg"
+    private static var coverImageURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(coverImageFilename)
+    }
     @State private var videoPickerItem: PhotosPickerItem?
     @State private var isLoadingVideo = false
     @State private var showRecorder = false
@@ -30,10 +37,30 @@ struct MainView: View {
     // Export States
     @State private var showExportAllAlert = false
     @State private var showExportComplete = false
+    @State private var showExportPartial = false
+    @State private var showExportFailed = false
     @State private var exportedCount = 0
+    @State private var exportFailedCount = 0
+    @State private var showQuickDelete = false
+    @State private var exportedRecordings: [Recording] = []
+    @State private var isExporting = false
+    @State private var exportProgress: Double = 0   // 0.0 – 1.0
+    @State private var exportTotal: Int = 0
+    @State private var exportDone: Int = 0
 
     // Advanced Settings
     @State private var showAdvancedSettings = false
+
+    // Storage error
+    @State private var showStorageError = false
+    @State private var storageErrorMessage = ""
+
+    // Promo code
+    @State private var showPromoSheet = false
+    @State private var promoCodeInput = ""
+    @State private var promoResult: PromoResult? = nil
+
+    enum PromoResult { case success, invalid }
     
     // Map State
     @State private var selectedMapRecording: Recording?
@@ -59,7 +86,10 @@ struct MainView: View {
                         
                         // Header
                         headerView
-                        
+
+                        // Storage indicator
+                        storageIndicatorView
+
                         // Hero Section (Image/Tetris/FlappyBird)
                         heroPreviewSection
                         
@@ -84,6 +114,11 @@ struct MainView: View {
                     .padding()
                     .padding(.bottom, 50)
                 }
+
+                // Export progress overlay
+                if isExporting {
+                    exportProgressOverlay
+                }
             }
             .navigationTitle("")
             .navigationBarHidden(true)
@@ -91,6 +126,11 @@ struct MainView: View {
                 AdMobManager.shared.initializeAdMob()
                 if !hasCompletedOnboarding {
                     showOnboarding = true
+                }
+                // Restore persisted cover image
+                if coverImageData == nil,
+                   let data = try? Data(contentsOf: MainView.coverImageURL) {
+                    coverImageData = data
                 }
             }
             .onChange(of: scenePhase, initial: false) { _, newPhase in
@@ -116,6 +156,16 @@ struct MainView: View {
             .sheet(isPresented: $showPaywall) {
                 PaywallView()
             }
+            .sheet(isPresented: $showPromoSheet) {
+                PromoCodeSheet(
+                    code: $promoCodeInput,
+                    result: $promoResult,
+                    onRedeem: {
+                        let ok = subscriptionManager.redeemPromoCode(promoCodeInput)
+                        promoResult = ok ? .success : .invalid
+                    }
+                )
+            }
 
             // MARK: - Alerts
             
@@ -131,11 +181,33 @@ struct MainView: View {
             
             // 2. Export Success
             .alert("Export Complete", isPresented: $showExportComplete) {
-                Button("OK") {}
+                Button("Delete from App", role: .destructive) {
+                    exportedRecordings.forEach { manager.deleteRecording($0) }
+                    exportedRecordings = []
+                }
+                Button("Keep in App") { exportedRecordings = [] }
             } message: {
-                Text("Successfully saved \(exportedCount) video(s).")
+                Text("Successfully saved \(exportedCount) video(s) to your Photos library. Delete them from the app to free up storage?")
             }
-            
+
+            // 2b. Export Partial
+            .alert("Some Videos Not Saved", isPresented: $showExportPartial) {
+                Button("Delete Saved Videos", role: .destructive) {
+                    exportedRecordings.forEach { manager.deleteRecording($0) }
+                    exportedRecordings = []
+                }
+                Button("Keep All") { exportedRecordings = [] }
+            } message: {
+                Text("\(exportedCount) of \(exportedCount + exportFailedCount) video(s) were saved to Photos. \(exportFailedCount) could not be saved, likely due to insufficient storage. Delete the \(exportedCount) saved video(s) from the app to free up space?")
+            }
+
+            // 2c. Export Failed
+            .alert("Export Failed", isPresented: $showExportFailed) {
+                Button("OK") { exportedRecordings = [] }
+            } message: {
+                Text("None of the \(exportFailedCount) video(s) could be saved. Your device may not have enough storage space. Please free up space and try again.")
+            }
+
             // 3. Delete All
             .alert("Delete \(manager.recordings.count) video(s)?", isPresented: $showDeleteAllAlert) {
                 Button("Delete \(manager.recordings.count) Video(s)", role: .destructive) {
@@ -154,6 +226,12 @@ struct MainView: View {
                     selectMode = false
                 }
                 Button("Cancel", role: .cancel) {}
+            }
+            // 5. Storage error
+            .alert("Not Enough Storage", isPresented: $showStorageError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(storageErrorMessage)
             }
             .alert("Subscription", isPresented: $showSubscriptionError) {
                 Button("OK", role: .cancel) {
@@ -190,8 +268,11 @@ struct MainView: View {
         // Load Image Task
         .onChange(of: pickerItem) {
             Task {
-                if let data = try? await pickerItem?.loadTransferable(type: Data.self) {
-                    coverImageData = data
+                if let data = try? await pickerItem?.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data),
+                   let jpeg = image.jpegData(compressionQuality: 0.8) {
+                    coverImageData = jpeg
+                    try? jpeg.write(to: MainView.coverImageURL, options: .atomic)
                 }
             }
         }
@@ -230,6 +311,11 @@ struct MainView: View {
                     }
                 } catch {
                     print("Error loading video: \(error)")
+                    let msg = (error as NSError).localizedDescription
+                    await MainActor.run {
+                        storageErrorMessage = msg
+                        showStorageError = true
+                    }
                 }
             }
         }
@@ -252,6 +338,100 @@ struct MainView: View {
         .padding(.top, 10)
     }
     
+    private var storageIndicatorView: some View {
+        let available = manager.availableStorageBytes
+        let total = manager.totalStorageBytes
+        let used = total > 0 ? total - available : 0
+
+        let availableGB = Double(available) / 1_073_741_824
+        let isLow = available < 500 * 1024 * 1024      // < 500 MB
+        let isCritical = available < 100 * 1024 * 1024 // < 100 MB
+
+        let freeLabel: String
+        if availableGB >= 1 {
+            freeLabel = String(format: "%.1f GB free", availableGB)
+        } else {
+            freeLabel = String(format: "%d MB free", Int(available / 1_048_576))
+        }
+
+        // Bar fills with used space (more fill = less room), like iPhone Settings
+        let usedFraction: Double = total > 0 ? min(1.0, Double(used) / Double(total)) : 0
+        let barColor: Color = isCritical ? .red : isLow ? .orange : .accentColor
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: isCritical ? "exclamationmark.triangle.fill" : "internaldrive")
+                    .foregroundColor(barColor)
+                    .font(.caption)
+                Text("Storage: \(freeLabel)")
+                    .font(.caption)
+                    .foregroundColor(isCritical ? .red : isLow ? .orange : .secondary)
+                Spacer()
+                if isCritical {
+                    Text("Low — free up space!")
+                        .font(.caption2.bold())
+                        .foregroundColor(.red)
+                } else if isLow {
+                    Text("Getting low")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color(uiColor: .systemFill))
+                        .frame(height: 6)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(barColor)
+                        .frame(width: geo.size.width * usedFraction, height: 6)
+                }
+            }
+            .frame(height: 6)
+        }
+        .padding(.horizontal, 2)
+        .onAppear { manager.refreshStorageInfo() }
+    }
+
+    private var exportProgressOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 36))
+                    .foregroundColor(.white)
+
+                Text("Saving to Photos…")
+                    .font(.headline)
+                    .foregroundColor(.white)
+
+                Text("\(exportDone) of \(exportTotal)")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.8))
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.white.opacity(0.3))
+                            .frame(height: 12)
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.white)
+                            .frame(width: geo.size.width * exportProgress, height: 12)
+                            .animation(.easeInOut(duration: 0.2), value: exportProgress)
+                    }
+                }
+                .frame(height: 12)
+                .padding(.horizontal, 4)
+            }
+            .padding(32)
+            .background(.ultraThinMaterial)
+            .cornerRadius(20)
+            .padding(.horizontal, 48)
+        }
+    }
+
     private var heroPreviewSection: some View {
         VStack(spacing: 12) {
             // Mode picker in a scrollable menu style for 4 options
@@ -343,6 +523,9 @@ struct MainView: View {
                         isPreview: true
                     )
                     .frame(height: 220)
+
+                case .worldClock:
+                    placeholderView(icon: "clock.fill", text: "World Clock Active", color: .cyan)
                 }
 
                 // Overlay Button for Image Picker
@@ -699,7 +882,9 @@ struct MainView: View {
                 .buttonStyle(.borderedProminent)
 
                 Button("Redeem Code") {
-                    isShowingOfferCodeRedemption = true
+                    promoCodeInput = ""
+                    promoResult = nil
+                    showPromoSheet = true
                 }
                 .buttonStyle(.bordered)
             }
@@ -974,66 +1159,107 @@ struct MainView: View {
         }
     }
     private func exportAllWithConfirmation() {
+        let recordings = manager.recordings
+        guard !recordings.isEmpty else { return }
         var successCount = 0
+        var failCount = 0
+        var saved: [Recording] = []
+
+        exportTotal = recordings.count
+        exportDone = 0
+        exportProgress = 0
+        isExporting = true
 
         Task {
-            for rec in manager.recordings {
+            for rec in recordings {
                 do {
                     try await PHPhotoLibrary.shared().performChanges {
                         let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: rec.url)
-
-                        // Embed GPS metadata if available
                         if let lat = rec.latitude, let lon = rec.longitude {
                             request?.location = CLLocation(latitude: lat, longitude: lon)
                         }
-
-                        // Set creation date if available
                         if let creation = rec.creation {
                             request?.creationDate = creation
                         }
                     }
                     successCount += 1
+                    saved.append(rec)
                 } catch {
+                    failCount += 1
                     print("Failed to export \(rec.name): \(error)")
+                }
+                await MainActor.run {
+                    exportDone += 1
+                    exportProgress = Double(exportDone) / Double(exportTotal)
                 }
             }
 
             await MainActor.run {
+                isExporting = false
                 exportedCount = successCount
-                showExportComplete = true
+                exportFailedCount = failCount
+                exportedRecordings = saved
+                if failCount == 0 {
+                    showExportComplete = true
+                } else if successCount == 0 {
+                    showExportFailed = true
+                } else {
+                    showExportPartial = true
+                }
+                manager.refreshStorageInfo()
             }
         }
     }
     
     private func exportSelectedWithConfirmation() {
         let selectedRecordings = manager.recordings.filter { selectedIDs.contains($0.id) }
+        guard !selectedRecordings.isEmpty else { return }
         var successCount = 0
+        var failCount = 0
+        var saved: [Recording] = []
+
+        exportTotal = selectedRecordings.count
+        exportDone = 0
+        exportProgress = 0
+        isExporting = true
 
         Task {
             for rec in selectedRecordings {
                 do {
                     try await PHPhotoLibrary.shared().performChanges {
                         let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: rec.url)
-
-                        // Embed GPS metadata if available
                         if let lat = rec.latitude, let lon = rec.longitude {
                             request?.location = CLLocation(latitude: lat, longitude: lon)
                         }
-
-                        // Set creation date if available
                         if let creation = rec.creation {
                             request?.creationDate = creation
                         }
                     }
                     successCount += 1
+                    saved.append(rec)
                 } catch {
+                    failCount += 1
                     print("Failed to export \(rec.name): \(error)")
+                }
+                await MainActor.run {
+                    exportDone += 1
+                    exportProgress = Double(exportDone) / Double(exportTotal)
                 }
             }
 
             await MainActor.run {
+                isExporting = false
                 exportedCount = successCount
-                showExportComplete = true
+                exportFailedCount = failCount
+                exportedRecordings = saved
+                if failCount == 0 {
+                    showExportComplete = true
+                } else if successCount == 0 {
+                    showExportFailed = true
+                } else {
+                    showExportPartial = true
+                }
+                manager.refreshStorageInfo()
             }
         }
     }
@@ -1451,5 +1677,89 @@ struct VideoPreviewView: View {
     private func formatSize(_ bytes: Int64) -> String {
         let mb = Double(bytes) / (1024 * 1024)
         return String(format: "%.1f MB", mb)
+    }
+}
+
+// MARK: - Promo Code Sheet
+
+struct PromoCodeSheet: View {
+    @Binding var code: String
+    @Binding var result: MainView.PromoResult?
+    let onRedeem: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 28) {
+                Image(systemName: "ticket.fill")
+                    .font(.system(size: 52))
+                    .foregroundColor(.accentColor)
+
+                VStack(spacing: 8) {
+                    Text("Redeem Promo Code")
+                        .font(.title2.bold())
+                    Text("Enter a promo code to unlock premium features.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                TextField("Enter code", text: $code)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .focused($fieldFocused)
+                    .padding()
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(
+                                result == .invalid ? Color.red :
+                                result == .success ? Color.green : Color.clear,
+                                lineWidth: 1.5
+                            )
+                    )
+
+                if let result {
+                    HStack(spacing: 6) {
+                        Image(systemName: result == .success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        Text(result == .success ? "Code accepted! Premium unlocked." : "Invalid code. Please try again.")
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(result == .success ? .green : .red)
+                }
+
+                Button {
+                    if result == .success {
+                        dismiss()
+                    } else {
+                        onRedeem()
+                    }
+                } label: {
+                    Text(result == .success ? "Done" : "Redeem")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(code.trimmingCharacters(in: .whitespaces).isEmpty ? Color.gray : Color.accentColor)
+                        .cornerRadius(14)
+                }
+                .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty && result == nil)
+
+                Spacer()
+            }
+            .padding(28)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .onAppear { fieldFocused = true }
+            .onChange(of: code) { _, _ in
+                if result == .invalid { result = nil }
+            }
+        }
     }
 }

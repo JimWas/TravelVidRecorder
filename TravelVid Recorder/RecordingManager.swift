@@ -52,6 +52,7 @@ enum RecordingDisplayMode: String, CaseIterable, Identifiable {
     case calculator = "Calculator"
     case ledBanner = "LED Banner"
     case currencyConverter = "Currency Converter"
+    case worldClock = "World Clock"
 
     var id: String { rawValue }
 
@@ -60,7 +61,7 @@ enum RecordingDisplayMode: String, CaseIterable, Identifiable {
         switch self {
         case .coverImage, .tetris:
             return false
-        case .videoPlayback, .fakeCall, .flappyBird, .bitcoin, .calculator, .ledBanner, .currencyConverter:
+        case .videoPlayback, .fakeCall, .flappyBird, .bitcoin, .calculator, .ledBanner, .currencyConverter, .worldClock:
             return true
         }
     }
@@ -136,6 +137,8 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var isRecording = false
     @Published var recordings: [Recording] = []
     @Published var isLoadingRecordings = true
+    @Published var availableStorageBytes: Int64 = 0
+    @Published var totalStorageBytes: Int64 = 0
     @Published var segmentLength: TimeInterval = 120
     @Published var selectedResolution: Resolution = .p1080
     @Published var audioOn = true
@@ -219,6 +222,13 @@ class RecordingManager: NSObject, ObservableObject {
         setupSafetyNotifications()
         loadPersistedVideo()
         loadPersistedSettings()
+        refreshStorageInfo()
+    }
+
+    func refreshStorageInfo() {
+        let space = SafeRecordingHandler.shared.checkDiskSpace()
+        availableStorageBytes = space.available
+        totalStorageBytes = space.total
     }
 
     private func loadPersistedSettings() {
@@ -968,6 +978,15 @@ class RecordingManager: NSObject, ObservableObject {
     func saveSelectedVideo(from sourceURL: URL) async throws -> URL {
         createVideoDirectory()
 
+        // Check disk space before copying
+        let diskSpace = SafeRecordingHandler.shared.checkDiskSpace()
+        let sourceSize = (try? FileManager.default.attributesOfItem(atPath: sourceURL.path)[.size] as? Int64) ?? 0
+        let requiredSpace = sourceSize + 100 * 1024 * 1024 // file size + 100MB buffer
+        if diskSpace.available < requiredSpace {
+            throw NSError(domain: "TravelVidRecorder", code: 507,
+                          userInfo: [NSLocalizedDescriptionKey: "Not enough storage space to save this video. Please free up space and try again."])
+        }
+
         // Generate unique filename to avoid conflicts
         let filename = "selected-video-\(UUID().uuidString).mov"
         let destURL = videoDirectory().appendingPathComponent(filename)
@@ -1045,6 +1064,7 @@ class RecordingManager: NSObject, ObservableObject {
 
         recordings = list.sorted { ($0.creation ?? .distantPast) > ($1.creation ?? .distantPast) }
         isLoadingRecordings = false
+        refreshStorageInfo()
     }
 
     // MARK: - Export
@@ -1055,6 +1075,14 @@ class RecordingManager: NSObject, ObservableObject {
     }
 
     func exportRecording(_ rec: Recording) {
+        // Check disk space before exporting — Photos needs room to import the video
+        let diskSpace = SafeRecordingHandler.shared.checkDiskSpace()
+        let requiredSpace = rec.size + 50 * 1024 * 1024 // file size + 50MB buffer
+        guard diskSpace.available >= requiredSpace else {
+            print("⚠️ Export skipped for \(rec.name): insufficient storage (\(diskSpace.available / 1024 / 1024)MB available, need \(requiredSpace / 1024 / 1024)MB)")
+            return
+        }
+        refreshStorageInfo()
         PHPhotoLibrary.shared().performChanges {
             let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: rec.url)
 
@@ -1078,6 +1106,7 @@ class RecordingManager: NSObject, ObservableObject {
         var metadata = loadMetadata()
         metadata.removeValue(forKey: rec.name)
         saveMetadata(metadata)
+        refreshStorageInfo()
     }
     
     deinit {

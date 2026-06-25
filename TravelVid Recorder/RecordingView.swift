@@ -84,6 +84,10 @@ struct RecordingView: View {
                     isPreview: false
                 )
                 .ignoresSafeArea(.all)
+
+            case .worldClock:
+                WorldClockView()
+                    .ignoresSafeArea(.all)
             }
 
             // POPUP (only if enabled)

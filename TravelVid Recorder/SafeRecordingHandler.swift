@@ -260,17 +260,18 @@ class SafeRecordingHandler: NSObject {
     }
     
     // MARK: - Disk Space Monitoring
-    func checkDiskSpace() -> (available: Int64, isLow: Bool) {
+    func checkDiskSpace() -> (available: Int64, total: Int64, isLow: Bool) {
         let fileURL = URL(fileURLWithPath: NSHomeDirectory())
-        
-        if let values = try? fileURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
-           let capacity = values.volumeAvailableCapacityForImportantUsage {
-            
-            let minimumRequired: Int64 = 500 * 1024 * 1024 // 500MB minimum
-            return (capacity, capacity < minimumRequired)
+        let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
+
+        if let values = try? fileURL.resourceValues(forKeys: keys),
+           let available = values.volumeAvailableCapacityForImportantUsage {
+            let total = Int64(values.volumeTotalCapacity ?? 0)
+            let minimumRequired: Int64 = 500 * 1024 * 1024
+            return (available, total, available < minimumRequired)
         }
-        
-        return (0, true)
+
+        return (0, 0, true)
     }
     
     // MARK: - Safe File Operations

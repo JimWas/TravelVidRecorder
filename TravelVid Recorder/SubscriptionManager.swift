@@ -63,6 +63,30 @@ class SubscriptionManager: ObservableObject {
         #endif
     }
 
+    // MARK: - Promo Codes
+
+    private let validPromoCodes: Set<String> = [
+        "NASAEMPLOYEES",
+        "TRAVELVIPFREE",
+        "JIMWAS2025",
+    ]
+
+    /// Returns true and unlocks premium if the code is valid and unused.
+    @discardableResult
+    func redeemPromoCode(_ code: String) -> Bool {
+        let normalised = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard validPromoCodes.contains(normalised) else { return false }
+        isPremium = true
+        UserDefaults.standard.set(true, forKey: "isPremium")
+        UserDefaults.standard.set(normalised, forKey: "redeemedPromoCode")
+        print("🎟️ Promo code '\(normalised)' redeemed — premium unlocked")
+        return true
+    }
+
+    var redeemedPromoCode: String? {
+        UserDefaults.standard.string(forKey: "redeemedPromoCode")
+    }
+
     deinit {
         transactionListener?.cancel()
     }

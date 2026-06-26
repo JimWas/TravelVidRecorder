@@ -203,7 +203,18 @@ struct RecordingView: View {
                 }
         )
         .onAppear {
-            _ = HardwareButtonBlocker.shared  // Activate volume blocker
+            // Activate volume blocker and wire up volume-button stop gestures if selected
+            let blocker = HardwareButtonBlocker.shared
+            switch manager.stopGesture {
+            case .volumeUp:
+                blocker.onVolumeUp = { stopAndDismiss() }
+                blocker.onVolumeDown = nil
+            case .volumeDown:
+                blocker.onVolumeDown = { stopAndDismiss() }
+                blocker.onVolumeUp = nil
+            default:
+                blocker.clearCallbacks()
+            }
 
             Task {
                 isPreparingSession = true
@@ -220,7 +231,6 @@ struct RecordingView: View {
                             startFakePopupTimer()
                         }
                     } else {
-                        // Session preparation failed - show error
                         sessionFailed = true
                     }
                 }
@@ -237,6 +247,7 @@ struct RecordingView: View {
         .onDisappear {
             holdTimer?.invalidate()
             stopFakePopupTimer()
+            HardwareButtonBlocker.shared.clearCallbacks()
             if manager.isRecording {
                 manager.stopRecording()
             } else {

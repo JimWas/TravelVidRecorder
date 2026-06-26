@@ -84,6 +84,8 @@ enum StopRecordingGesture: String, CaseIterable, Identifiable {
     case topLeftCorner = "5 Taps Top-Left Corner"
     case topRightCorner = "5 Taps Top-Right Corner"
     case doubleTapHold = "Tap & Hold"
+    case volumeUp = "Volume Up Button"
+    case volumeDown = "Volume Down Button"
 
     var id: String { rawValue }
 
@@ -97,6 +99,8 @@ enum StopRecordingGesture: String, CaseIterable, Identifiable {
         case .topLeftCorner: return "Tap top-left corner 5 times"
         case .topRightCorner: return "Tap top-right corner 5 times"
         case .doubleTapHold: return "Tap and hold for \(holdDuration) seconds"
+        case .volumeUp: return "Press volume up button"
+        case .volumeDown: return "Press volume down button"
         }
     }
 }
@@ -193,6 +197,11 @@ class RecordingManager: NSObject, ObservableObject {
             UserDefaults.standard.set(stealthBrightness, forKey: "stealthBrightness")
         }
     }
+    @Published var autoStartOnLaunch: Bool = false {
+        didSet {
+            UserDefaults.standard.set(autoStartOnLaunch, forKey: "autoStartOnLaunch")
+        }
+    }
 
     private var captureSession: AVCaptureSession?
     private var movieOutput: AVCaptureMovieFileOutput?
@@ -256,6 +265,9 @@ class RecordingManager: NSObject, ObservableObject {
         }
         if UserDefaults.standard.object(forKey: "stealthBrightness") != nil {
             stealthBrightness = UserDefaults.standard.bool(forKey: "stealthBrightness")
+        }
+        if UserDefaults.standard.object(forKey: "autoStartOnLaunch") != nil {
+            autoStartOnLaunch = UserDefaults.standard.bool(forKey: "autoStartOnLaunch")
         }
     }
     

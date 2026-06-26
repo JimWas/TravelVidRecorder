@@ -132,6 +132,14 @@ struct MainView: View {
                    let data = try? Data(contentsOf: MainView.coverImageURL) {
                     coverImageData = data
                 }
+                // Auto-start recording if enabled (only after onboarding, only if ready to record)
+                if manager.autoStartOnLaunch && hasCompletedOnboarding {
+                    let coverReady = manager.recordingDisplayMode != .coverImage || coverImage != nil
+                    let videoReady = manager.recordingDisplayMode != .videoPlayback || manager.selectedVideoURL != nil
+                    if coverReady && videoReady {
+                        showRecorder = true
+                    }
+                }
             }
             .onChange(of: scenePhase, initial: false) { _, newPhase in
                 switch newPhase {
@@ -771,6 +779,27 @@ struct MainView: View {
                         Toggle("", isOn: $manager.showRecordingIndicator)
                             .labelsHidden()
                             .tint(.red)
+                    }
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+
+                    HStack(spacing: 12) {
+                        Image(systemName: "bolt.fill")
+                            .font(.title3)
+                            .foregroundColor(.yellow)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Auto-Start on Launch")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Recording begins immediately when the app opens.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $manager.autoStartOnLaunch)
+                            .labelsHidden()
+                            .tint(.yellow)
                     }
                     .padding(12)
                     .background(Color(uiColor: .secondarySystemBackground))

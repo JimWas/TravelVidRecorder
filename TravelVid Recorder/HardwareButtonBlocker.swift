@@ -12,6 +12,11 @@ final class HardwareButtonBlocker: NSObject {
     private var lastVolume: Float = 0.5
     private var slider: UISlider?
 
+    /// When set, a volume-up press calls onVolumeUp and a volume-down press calls onVolumeDown
+    /// instead of simply being blocked. Set to nil to return to block-only mode.
+    var onVolumeUp: (() -> Void)?
+    var onVolumeDown: (() -> Void)?
+
     override private init() {
         super.init()
         setup()
@@ -21,17 +26,15 @@ final class HardwareButtonBlocker: NSObject {
 
         // Hide the MPVolumeView
         volumeView.alpha = 0.01
-        
+
         // Add to window scene (iOS 15+ compatible)
         DispatchQueue.main.async {
             if #available(iOS 15.0, *) {
-                // Use UIWindowScene for iOS 15+
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let window = windowScene.windows.first {
                     window.addSubview(self.volumeView)
                 }
             } else {
-                // Fallback for older iOS versions
                 if let window = UIApplication.shared.windows.first {
                     window.addSubview(self.volumeView)
                 }
@@ -69,19 +72,33 @@ final class HardwareButtonBlocker: NSObject {
         change: [NSKeyValueChangeKey : Any]?,
         context: UnsafeMutableRawPointer?
     ) {
-        guard keyPath == "outputVolume" else { return }
+        guard keyPath == "outputVolume",
+              let newVolume = change?[.newKey] as? Float else { return }
 
-        // Silent haptic feedback
+        let isUp = newVolume > lastVolume
+
+        // Always reset volume so the HUD never shows
+        resetVolume()
+
+        // Fire callback if registered, otherwise just block silently
+        if isUp {
+            onVolumeUp?()
+        } else {
+            onVolumeDown?()
+        }
+
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
-
-        // Reset volume to previous level
-        resetVolume()
     }
 
     private func resetVolume() {
         guard let slider else { return }
         slider.value = lastVolume
+    }
+
+    func clearCallbacks() {
+        onVolumeUp = nil
+        onVolumeDown = nil
     }
 
     deinit {

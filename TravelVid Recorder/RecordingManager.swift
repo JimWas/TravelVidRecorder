@@ -84,8 +84,8 @@ enum StopRecordingGesture: String, CaseIterable, Identifiable {
     case topLeftCorner = "5 Taps Top-Left Corner"
     case topRightCorner = "5 Taps Top-Right Corner"
     case doubleTapHold = "Tap & Hold"
-    case volumeUp = "Volume Up Button"
-    case volumeDown = "Volume Down Button"
+    case volumeUp = "Double-Press Vol Up"
+    case volumeDown = "Double-Press Vol Down"
 
     var id: String { rawValue }
 
@@ -99,8 +99,8 @@ enum StopRecordingGesture: String, CaseIterable, Identifiable {
         case .topLeftCorner: return "Tap top-left corner 5 times"
         case .topRightCorner: return "Tap top-right corner 5 times"
         case .doubleTapHold: return "Tap and hold for \(holdDuration) seconds"
-        case .volumeUp: return "Press volume up button"
-        case .volumeDown: return "Press volume down button"
+        case .volumeUp: return "Press volume up twice quickly"
+        case .volumeDown: return "Press volume down twice quickly"
         }
     }
 }
@@ -227,7 +227,10 @@ class RecordingManager: NSObject, ObservableObject {
     override init() {
         super.init()
         createDirectory()
-        Task { await loadRecordings() }
+        Task {
+            await SafeRecordingHandler.shared.cleanupCorruptedFiles(in: directory())
+            await loadRecordings()
+        }
         setupSafetyNotifications()
         loadPersistedVideo()
         loadPersistedSettings()
@@ -492,21 +495,43 @@ class RecordingManager: NSObject, ObservableObject {
         switch type {
         case .began:
             print("🔇 Audio session interrupted (phone call, Siri, etc.)")
-            // Recording continues but audio may be lost temporarily
         case .ended:
             print("🔊 Audio session interruption ended")
-            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
-                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-                if options.contains(.shouldResume) {
-                    // Audio can resume - recording should continue normally
-                    print("✅ Audio session can resume")
-                }
+            guard isRecording else { return }
+            let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            if options.contains(.shouldResume) {
+                print("✅ Resuming recording after interruption")
+                Task { await resumeAfterInterruption() }
             }
         @unknown default:
             break
         }
     }
     
+    private func resumeAfterInterruption() async {
+        // Reactivate audio session
+        try? AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+
+        guard let session = captureSession, let output = movieOutput else { return }
+
+        // If the capture session was stopped by the interruption, restart it
+        if !session.isRunning {
+            session.startRunning()
+            // Small delay to let the session stabilise before recording to a new segment
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+
+        // Start a new segment so the interrupted segment is cleanly sealed
+        guard isRecording, !output.isRecording else { return }
+        let url = nextURL()
+        activeSegmentURL = url
+        activeSegmentStartedAt = Date()
+        output.startRecording(to: url, recordingDelegate: self)
+        print("▶️ Recording resumed in new segment after interruption")
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
     @objc private func handleSafeStop() {
         print("🛡️ Safe stop requested")
         // Note: We no longer automatically stop recording here.
@@ -724,6 +749,8 @@ class RecordingManager: NSObject, ObservableObject {
     func startRecording() {
         guard let output = movieOutput else { return }
 
+        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+
         isRecording = true
         isSegmenting = false
         let url = nextURL()
@@ -771,6 +798,8 @@ class RecordingManager: NSObject, ObservableObject {
     func stopRecording() {
         guard isRecording else { return }
         isRecording = false
+
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
 
         stopSegmentTimer()
         activeSegmentStartedAt = nil

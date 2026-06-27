@@ -12,10 +12,14 @@ final class HardwareButtonBlocker: NSObject {
     private var lastVolume: Float = 0.5
     private var slider: UISlider?
 
-    /// When set, a volume-up press calls onVolumeUp and a volume-down press calls onVolumeDown
-    /// instead of simply being blocked. Set to nil to return to block-only mode.
+    /// When set, two quick presses of volume-up fires onVolumeUp; two quick presses of
+    /// volume-down fires onVolumeDown. Single presses are blocked silently as normal.
     var onVolumeUp: (() -> Void)?
     var onVolumeDown: (() -> Void)?
+
+    private let doublePressWindow: TimeInterval = 1.0
+    private var lastUpPressTime: Date?
+    private var lastDownPressTime: Date?
 
     override private init() {
         super.init()
@@ -80,15 +84,35 @@ final class HardwareButtonBlocker: NSObject {
         // Always reset volume so the HUD never shows
         resetVolume()
 
-        // Fire callback if registered, otherwise just block silently
-        if isUp {
-            onVolumeUp?()
-        } else {
-            onVolumeDown?()
-        }
+        let now = Date()
 
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        if isUp {
+            if let last = lastUpPressTime, now.timeIntervalSince(last) <= doublePressWindow {
+                // Second press within window — fire and reset
+                lastUpPressTime = nil
+                onVolumeUp?()
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.impactOccurred()
+            } else {
+                // First press — record time, light feedback
+                lastUpPressTime = now
+                lastDownPressTime = nil
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+            }
+        } else {
+            if let last = lastDownPressTime, now.timeIntervalSince(last) <= doublePressWindow {
+                lastDownPressTime = nil
+                onVolumeDown?()
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.impactOccurred()
+            } else {
+                lastDownPressTime = now
+                lastUpPressTime = nil
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+            }
+        }
     }
 
     private func resetVolume() {
@@ -99,6 +123,8 @@ final class HardwareButtonBlocker: NSObject {
     func clearCallbacks() {
         onVolumeUp = nil
         onVolumeDown = nil
+        lastUpPressTime = nil
+        lastDownPressTime = nil
     }
 
     deinit {

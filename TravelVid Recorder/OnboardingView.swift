@@ -341,9 +341,9 @@ struct OnboardingView: View {
         case .doubleTapHold:
             return "Tap and hold"
         case .volumeUp:
-            return "Press volume up"
+            return "Double-press vol up"
         case .volumeDown:
-            return "Press volume down"
+            return "Double-press vol down"
         }
     }
 
@@ -366,9 +366,9 @@ struct OnboardingView: View {
         case .doubleTapHold:
             return "Tap and hold for the configured duration to stop recording."
         case .volumeUp:
-            return "Press the volume up button once to stop recording."
+            return "Press volume up twice quickly (within 1 second) to stop recording."
         case .volumeDown:
-            return "Press the volume down button once to stop recording."
+            return "Press volume down twice quickly (within 1 second) to stop recording."
         }
     }
 }

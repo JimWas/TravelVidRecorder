@@ -126,6 +126,29 @@ struct Recording: Identifiable {
     let locationPath: [LocationPoint]?
 }
 
+// MARK: - Recording History Entry
+struct RecordingHistoryEntry: Codable, Identifiable {
+    let id: UUID
+    let startDate: Date
+    let duration: TimeInterval
+    let segmentCount: Int
+    let totalBytes: Int64
+    let address: String?
+    let latitude: Double?
+    let longitude: Double?
+
+    init(startDate: Date, duration: TimeInterval, segmentCount: Int, totalBytes: Int64, address: String?, latitude: Double?, longitude: Double?) {
+        self.id = UUID()
+        self.startDate = startDate
+        self.duration = duration
+        self.segmentCount = segmentCount
+        self.totalBytes = totalBytes
+        self.address = address
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+}
+
 // MARK: - Recording Metadata (for persistence)
 struct RecordingMetadata: Codable {
     let latitude: Double?
@@ -143,6 +166,7 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var isLoadingRecordings = true
     @Published var availableStorageBytes: Int64 = 0
     @Published var totalStorageBytes: Int64 = 0
+    @Published var recordingHistory: [RecordingHistoryEntry] = []
     @Published var segmentLength: TimeInterval = 120
     @Published var selectedResolution: Resolution = .p1080
     @Published var audioOn = true
@@ -216,6 +240,9 @@ class RecordingManager: NSObject, ObservableObject {
     private var recordingLocation: CLLocation?
     private var recordingPath: [LocationPoint] = []
 
+    private var sessionStartDate: Date?
+    private var sessionSegmentCount: Int = 0
+
     // Reliability monitoring
     private var watchdogTimer: Timer?
     private var lastRecordingCheck: Date?
@@ -235,6 +262,7 @@ class RecordingManager: NSObject, ObservableObject {
         loadPersistedVideo()
         loadPersistedSettings()
         refreshStorageInfo()
+        recordingHistory = loadHistory()
     }
 
     func refreshStorageInfo() {
@@ -753,6 +781,8 @@ class RecordingManager: NSObject, ObservableObject {
 
         isRecording = true
         isSegmenting = false
+        sessionStartDate = Date()
+        sessionSegmentCount = 0
         let url = nextURL()
         activeSegmentURL = url
         activeSegmentStartedAt = Date()
@@ -811,6 +841,23 @@ class RecordingManager: NSObject, ObservableObject {
         LocationManager.shared.stopTracking()
         LocationManager.shared.onLocationUpdate = nil
 
+        // Append history entry
+        if let start = sessionStartDate {
+            let elapsed = Date().timeIntervalSince(start)
+            let entry = RecordingHistoryEntry(
+                startDate: start,
+                duration: elapsed,
+                segmentCount: max(1, sessionSegmentCount),
+                totalBytes: 0,
+                address: recordingLocation.flatMap { _ in nil },
+                latitude: recordingLocation?.coordinate.latitude,
+                longitude: recordingLocation?.coordinate.longitude
+            )
+            recordingHistory.insert(entry, at: 0)
+            saveHistory(recordingHistory)
+        }
+        sessionStartDate = nil
+
         print("🛑 Recording stopped and all timers invalidated")
     }
 
@@ -833,6 +880,7 @@ class RecordingManager: NSObject, ObservableObject {
     private func rotateSegment() {
         guard isRecording, !isSegmenting else { return }
         isSegmenting = true
+        sessionSegmentCount += 1
         stopSegmentTimer()
         movieOutput?.stopRecording()
     }
@@ -963,6 +1011,29 @@ class RecordingManager: NSObject, ObservableObject {
 
     private func createDirectory() {
         try? FileManager.default.createDirectory(at: directory(), withIntermediateDirectories: true)
+    }
+
+    // MARK: - History Persistence
+    private func historyURL() -> URL {
+        directory().appendingPathComponent("history.json")
+    }
+
+    private func loadHistory() -> [RecordingHistoryEntry] {
+        guard let data = try? Data(contentsOf: historyURL()),
+              let entries = try? JSONDecoder().decode([RecordingHistoryEntry].self, from: data) else {
+            return []
+        }
+        return entries
+    }
+
+    private func saveHistory(_ entries: [RecordingHistoryEntry]) {
+        guard let data = try? JSONEncoder().encode(entries) else { return }
+        try? data.write(to: historyURL(), options: .atomic)
+    }
+
+    func clearHistory() {
+        recordingHistory = []
+        saveHistory([])
     }
 
     // MARK: - Metadata Persistence

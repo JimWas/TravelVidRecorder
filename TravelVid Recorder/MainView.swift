@@ -2,6 +2,8 @@ import SwiftUI
 import PhotosUI
 import MapKit
 import StoreKit
+import Photos
+import CoreLocation
 
 struct MainView: View {
     @StateObject private var manager = RecordingManager()
@@ -67,6 +69,7 @@ struct MainView: View {
 
     // Video Preview State
     @State private var previewRecording: Recording?
+    @State private var showHistory = false
     
     var coverImage: UIImage? {
         guard let data = coverImageData else { return nil }
@@ -163,6 +166,11 @@ struct MainView: View {
             }
             .sheet(isPresented: $showPaywall) {
                 PaywallView()
+            }
+            .sheet(isPresented: $showHistory) {
+                RecordingHistoryView(log: manager.recordingHistory) {
+                    manager.clearHistory()
+                }
             }
             .sheet(isPresented: $showPromoSheet) {
                 PromoCodeSheet(
@@ -342,6 +350,13 @@ struct MainView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
+            Button {
+                showHistory = true
+            } label: {
+                Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                    .font(.title3)
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(.top, 10)
     }
@@ -1547,6 +1562,8 @@ struct VideoPreviewView: View {
     @State private var isLoading = true
     @State private var playbackError: String?
     @State private var loadTask: Task<Void, Never>?
+    @State private var showTrimmer = false
+    @State private var showTrimExportSuccess = false
 
     var body: some View {
         NavigationStack {
@@ -1625,6 +1642,15 @@ struct VideoPreviewView: View {
             .navigationTitle("Preview")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        player?.pause()
+                        showTrimmer = true
+                    } label: {
+                        Label("Trim", systemImage: "trim")
+                    }
+                    .disabled(player == nil)
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         player?.pause()
@@ -1632,6 +1658,22 @@ struct VideoPreviewView: View {
                         dismiss()
                     }
                 }
+            }
+            .sheet(isPresented: $showTrimmer) {
+                VideoTrimmerView(recording: recording) { trimmedURL in
+                    PHPhotoLibrary.shared().performChanges {
+                        let req = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: trimmedURL)
+                        if let lat = recording.latitude, let lon = recording.longitude {
+                            req?.location = CLLocation(latitude: lat, longitude: lon)
+                        }
+                    }
+                    showTrimExportSuccess = true
+                }
+            }
+            .alert("Exported", isPresented: $showTrimExportSuccess) {
+                Button("OK") {}
+            } message: {
+                Text("Trimmed video saved to your Photos library.")
             }
             .onAppear {
                 startLoadingPlayback()

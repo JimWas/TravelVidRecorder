@@ -7,6 +7,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+#### Recording Reliability Center
+- Added a passive Recording Readiness card to the main screen with camera readiness/fallback, microphone status, free storage, estimated remaining recording time, configured segment length, and the most recently completed segment
+- Added `RecordingReliabilityStatus`, per-check status items, and `RecordingRecoveryState` models for clear ready, warning, unavailable, interrupted, recovering, and failed states
+- Readiness refreshes when the app becomes active and when camera, microphone, resolution, or segment settings change
+- The latest completed segment is shown immediately after file validation and restored from the recording library on launch
+- Kept recording one-tap: warnings do not add confirmation screens, and only unavailable camera access/hardware or critically low storage blocks recording
+
+#### Automatic Recording Recovery
+- Consolidated camera interruptions, audio interruptions, capture runtime errors, foreground recovery, and watchdog failures into one coordinated recovery flow
+- Recovery safely finalizes the active segment, waits for the app and camera to become available, reactivates the audio/capture sessions, and starts a fresh segment automatically
+- Added capture-session rebuilds after media-services resets and as a fallback on subsequent retries
+- Added a three-attempt recovery limit and cancellation of competing recovery tasks
+- Background camera loss is now represented as an interruption instead of incorrectly appearing to continue recording
+- Unrecoverable recovery, critically low storage, and critical thermal conditions use the existing failure overlay
+
+#### AdMob Diagnostics and Attribution
+- Added detailed interstitial and rewarded-ad load, presentation, impression, click, dismissal, and failure diagnostics
+- Added mediation response logging and readable error categories for failures such as no fill and invalid requests
+- Prevented duplicate ad-load requests while a request is already in progress
+- Updated the bundled SKAdNetwork list and added BidMachine identifier `wg4vff78zm.skadnetwork`
+
+### Changed
+- Replaced local hard-coded premium coupon handling with Apple Offer Code redemption through StoreKit in the paywall and Settings
+- Successful subscription purchases, restores, product loads, and offer-code refreshes now clear stale purchase errors
+
+### Fixed
+- Replaced the unreliable recording cover-mode context menu with a dedicated picker sheet so Cover Image, Tetris, Bitcoin Price, and other modes remain selectable after a cover image is saved
+
 ---
 
 ## [1.5.0] — 2026-06-27
@@ -262,6 +292,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - All managers use `@MainActor` — never call `@Published` setters from a background thread without `await MainActor.run {}`
 - `PBXFileSystemSynchronizedRootGroup` is used in the Xcode project — new `.swift` files added to the `TravelVid Recorder/` folder are picked up automatically, no need to edit `project.pbxproj`
-- Premium is auto-unlocked in DEBUG builds via `developerOverrideEnabled` in `SubscriptionManager.swift`; set to `false` to test the paywall
+- The DEBUG premium override is disabled by default in `SubscriptionManager.swift`; temporarily enable `developerOverrideEnabled` only for local premium-feature testing
 - AdMob initializes lazily on the first ad request — do not call `initializeAdMob()` at app launch
 - SourceKit reports false "Cannot find X in scope" errors on this project due to cross-file symbol resolution; always verify with `xcodebuild` before concluding there is a real compiler error

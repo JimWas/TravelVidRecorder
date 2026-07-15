@@ -16,6 +16,8 @@ struct RecordingView: View {
     @State private var fakePopupTimer: Timer?
     @State private var doubleTapDetected = false
     @State private var sessionFailed = false
+    @State private var sessionFailureTitle = "Camera Unavailable"
+    @State private var sessionFailureMessage = "Unable to access the camera. Please check your permissions in Settings."
     @State private var isPreparingSession = true
 
     var body: some View {
@@ -143,10 +145,10 @@ struct RecordingView: View {
                     Image(systemName: "video.slash.fill")
                         .font(.system(size: 60))
                         .foregroundColor(.red)
-                    Text("Camera Unavailable")
+                    Text(sessionFailureTitle)
                         .font(.title2.bold())
                         .foregroundColor(.white)
-                    Text("Unable to access the camera. Please check your permissions in Settings.")
+                    Text(sessionFailureMessage)
                         .font(.body)
                         .foregroundColor(.white.opacity(0.8))
                         .multilineTextAlignment(.center)
@@ -226,8 +228,15 @@ struct RecordingView: View {
                     isPreparingSession = false
 
                     if ok {
-                        manager.startRecording()
-                        if manager.showFakePopups {
+                        let started = manager.startRecording()
+                        sessionFailed = !started
+                        if !started {
+                            sessionFailureTitle = "Recording Unavailable"
+                            sessionFailureMessage = manager.reliabilityStatus.items
+                                .first(where: { $0.level == .unavailable })?.detail ??
+                                "Recording could not start safely. Please return and check Recording Readiness."
+                        }
+                        if started && manager.showFakePopups {
                             startFakePopupTimer()
                         }
                     } else {
@@ -242,6 +251,13 @@ struct RecordingView: View {
                 showFakePopup = false
             } else if manager.isRecording {
                 startFakePopupTimer()
+            }
+        }
+        .onChange(of: manager.recoveryState) { _, newState in
+            if case .failed(let message) = newState {
+                sessionFailureTitle = "Recording Stopped"
+                sessionFailureMessage = message
+                sessionFailed = true
             }
         }
         .onDisappear {

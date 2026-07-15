@@ -28,9 +28,12 @@ Keep recording while your screen shows something completely unrelated.
 - **Resolutions**: 720p, 1080p, 4K
 - **Cameras**: Front, Back (Wide + Ultra-Wide)
 - **Auto-segmentation**: splits recordings into configurable chunks (1–10 min) so no data is lost on interruption
+- **Recording Readiness**: passively checks camera, microphone, storage, segment length, and the most recently saved segment before recording
 - **Stabilization**: optional video stabilization
 - **Audio toggle**: record with or without audio
-- **Watchdog**: background timer verifies recording is active every 10 seconds and auto-recovers if it stalls
+- **Automatic recovery**: a unified recovery flow handles camera/audio interruptions, runtime errors, and watchdog-detected stalls
+
+Recording Readiness does not add another confirmation screen or required tap. Warnings remain one-tap starts; recording is blocked only when the camera is unavailable or storage is critically low.
 
 ### Stop Gestures
 Discreetly stop recording without it being obvious.
@@ -63,7 +66,7 @@ Discreetly stop recording without it being obvious.
 - Unlock all decoy modes
 - Ad-free video exports
 - **$3.99/month** with a **2-week free trial**
-- Promo code redemption built-in
+- Apple Offer Code redemption in the paywall and Settings
 
 ---
 
@@ -125,7 +128,7 @@ TravelVid Recorder/
 ├── RecordingManager.swift           # Core recording logic (AVFoundation)
 ├── SafeRecordingHandler.swift       # File safety, background tasks, disk checks
 ├── LocationManager.swift            # GPS tracking + reverse geocoding
-├── SubscriptionManager.swift        # StoreKit v2 subscriptions + promo codes
+├── SubscriptionManager.swift        # StoreKit v2 subscriptions + Apple Offer Codes
 ├── AdMobManager.swift               # Google AdMob ads
 ├── HardwareButtonBlocker.swift      # Volume button interception during recording
 ├── PaywallView.swift                # Premium subscription UI
@@ -147,13 +150,18 @@ TravelVid Recorder/
 
 TravelVid Recorder is built to keep recording even under adverse conditions:
 
+- **Recording Readiness panel** — reports camera readiness or fallback, microphone status, available storage with estimated recording time, configured segment length, and the latest completed segment
 - **Watchdog timer** — verifies recording is active every 10 seconds, restarts if stalled
 - **Thermal monitoring** — forces segment save at "serious" heat, stops at "critical"
 - **Memory pressure** — forces segment save on low memory warning
 - **Disk space monitor** — warns at <500 MB, forces segment save at <250 MB, stops at <100 MB
-- **Session interruption handling** — detects camera/audio interruptions, auto-recovers
-- **Foreground recovery** — verifies recording state when app returns from background
+- **Unified interruption recovery** — finalizes the active segment, waits for foreground/camera availability, restores audio and capture sessions, and starts a fresh segment
+- **Session rebuild fallback** — rebuilds the capture session after media-services resets or failed recovery attempts
+- **Bounded retries** — makes up to three coordinated recovery attempts and prevents competing recovery tasks
+- **Foreground recovery** — treats background camera loss as an interruption and resumes safely when the app becomes active
 - **Short segments** — configurable segment length minimizes data loss on crash
+
+Real interruption behavior must be verified on a physical device; the Simulator cannot reproduce camera capture, phone calls, thermal pressure, or media-services resets accurately.
 
 ---
 

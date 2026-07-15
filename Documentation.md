@@ -87,6 +87,8 @@ TravelVid Recorder/
 @Published var selectedResolution: Resolution = .p1080
 @Published var audioOn = true                   // Include audio
 @Published var enableStabilization = false      // Video stabilization
+@Published private(set) var reliabilityStatus: RecordingReliabilityStatus
+@Published private(set) var recoveryState: RecordingRecoveryState
 @Published var showFakePopups = true            // Show fake "storage full" alerts
 @Published var recordingDisplayMode: RecordingDisplayMode = .coverImage
 @Published var stopGesture: StopRecordingGesture = .fiveTaps
@@ -148,6 +150,7 @@ enum CameraType: String, CaseIterable {
 func prepareSession() async -> Bool  // Initialize AVCaptureSession
 func startRecording()                // Begin recording with all timers
 func stopRecording()                 // End recording, cleanup
+func refreshReliabilityStatus()      // Refresh passive pre-recording checks
 
 // Internal
 private func rotateSegment()         // Split recording into segments
@@ -163,13 +166,19 @@ func saveSelectedVideo(from: URL)    // Save video for playback mode
 ```
 
 #### Reliability Features (recently added)
+- **Recording Readiness**: Shows camera readiness/fallback, microphone status, storage and estimated remaining recording time, segment length, and the most recently completed segment
+- **No Additional Start Step**: The readiness card is passive. Warnings do not require confirmation; only unavailable camera access or critically low storage blocks recording
 - **Watchdog Timer**: Every 10s verifies `movieOutput.isRecording` matches `isRecording`
 - **Watchdog Log Throttle**: Recording stats log at most once per 60s to reduce debug overhead
 - **Thermal Monitoring**: Forces segment save at "serious", stops at "critical"
 - **Memory Pressure**: Forces segment save on low memory warning
 - **Disk Space Monitor**: Warns at <500MB, saves at <250MB, stops at <100MB
-- **Session Interruption Handling**: Detects camera/audio interruptions, auto-recovers
-- **Foreground Recovery**: Verifies recording when app returns from background
+- **Unified Recovery State Machine**: Coordinates capture interruptions, audio interruptions, runtime errors, and watchdog failures without starting competing recovery tasks
+- **Safe Segment Recovery**: Finalizes the current segment, waits for foreground/interruption end, reactivates audio and capture sessions, then starts a fresh segment
+- **Session Rebuild Fallback**: Rebuilds the capture session after media-services resets or failed recovery attempts
+- **Bounded Retries**: Attempts recovery up to three times before displaying the existing recording failure overlay
+- **Foreground Recovery**: Treats background camera loss as interrupted and resumes safely when the app becomes active
+- **Immediate Last-Segment Status**: Updates the readiness summary as soon as a segment validates, before reverse geocoding completes
 
 ### 2. SafeRecordingHandler.swift
 Handles file safety and background task cleanup (no persistent background audio).
@@ -229,11 +238,12 @@ private let productID = "com.jimwas.travelvid.premium"
 func loadProducts() async
 func purchase() async
 func restorePurchases() async
+func refreshAfterOfferCodeRedemption() async
 func updateSubscriptionStatus() async
 func isEligibleForIntroOffer() async -> Bool
 
-// DEBUG ONLY: Auto-unlocks premium in debug builds
-private let developerOverrideEnabled: Bool  // Set to true for testing
+// DEBUG ONLY: Disabled by default; set to true for local premium testing
+private let developerOverrideEnabled: Bool
 func togglePremiumForTesting()              // Manual toggle in DEBUG
 ```
 
@@ -241,6 +251,7 @@ func togglePremiumForTesting()              // Manual toggle in DEBUG
 - **Product ID**: `com.jimwas.travelvid.premium`
 - **Price**: $3.99/month
 - **Trial**: 2-week free introductory offer
+- **Offer Codes**: Redeemed through Apple's StoreKit offer-code sheet from the paywall or Settings; premium status is refreshed with `AppStore.sync()` afterward
 
 ### 5. AdMobManager.swift
 **Google AdMob integration.**
@@ -258,6 +269,13 @@ func showInterstitialAd(completion: @escaping () -> Void)
 ```
 
 **Ad Flow**: Free users must watch rewarded ad to export videos. Premium users skip ads. AdMob SDK now initializes lazily on first ad request, not at app launch.
+
+**Ad Diagnostics**:
+- Duplicate interstitial and rewarded loads are ignored while a request is already in progress
+- Successful loads log the response ID and selected mediation source
+- Failures log a readable category, error details, response ID, and mediation adapter results when available
+- Presentation, impression, click, dismissal, and presentation-failure callbacks are logged separately
+- `TravelVid-Recorder-Info.plist` contains the synchronized SKAdNetwork identifiers, including BidMachine `wg4vff78zm.skadnetwork`
 
 ### 6. HardwareButtonBlocker.swift
 **Prevents volume buttons from working during recording.**
@@ -279,6 +297,12 @@ Uses KVO on `AVAudioSession.outputVolume` to detect button presses, then resets 
 - Tap recording → Opens video preview player
 - Tap map thumbnail → Opens full map view with location
 - Long press / Select mode → Multi-select for batch operations
+
+**Recording Readiness**:
+- The main screen includes a passive status card; it never inserts another screen into the record-button flow
+- `Ready with warning` allows recording to begin immediately
+- `Unavailable` prevents starting when camera access/hardware is unavailable or free storage is below 100 MB
+- The card refreshes when the app returns to the foreground and when camera, audio, resolution, or segment settings change
 
 **Supporting Views in MainView.swift**:
 - `MapSnapshotView` - Thumbnail map preview for recordings with GPS
@@ -510,6 +534,9 @@ NotificationCenter.default.post(name: NSNotification.Name("EmergencyStopRecordin
 | Flappy Bird Mode | | ✓ |
 | Bitcoin Mode | | ✓ |
 | Calculator Mode | | ✓ |
+| LED Banner Mode | | ✓ |
+| Currency Converter Mode | | ✓ |
+| World Clock Mode | | ✓ |
 | Ad-Free Exports | | ✓ |
 | GPS Tracking | ✓ | ✓ |
 | Video Segmentation | ✓ | ✓ |
@@ -520,11 +547,11 @@ NotificationCenter.default.post(name: NSNotification.Name("EmergencyStopRecordin
 ## TESTING
 
 ### Unlock Premium in Debug
-In `SubscriptionManager.swift`, premium is auto-unlocked in DEBUG builds:
+In `SubscriptionManager.swift`, the developer override is disabled by default. Temporarily enable it only for local premium-feature testing:
 ```swift
 private let developerOverrideEnabled: Bool = {
     #if DEBUG
-    return true  // Set to false to test paywall
+    return false  // Temporarily change to true to bypass StoreKit locally
     #else
     return false
     #endif
@@ -532,6 +559,13 @@ private let developerOverrideEnabled: Bool = {
 ```
 
 ### Test Recording Reliability
+Before recording, verify the Recording Readiness card shows:
+- The selected camera or its standard-camera fallback
+- Microphone state, including video-only fallback when permission is denied
+- Free storage and an approximate remaining recording duration
+- The configured segment interval
+- The latest completed segment after recording or app relaunch
+
 Watch Xcode console for these logs:
 ```
 📊 Watchdog: Recording active - 45s, 12340KB   // every ~60s
@@ -540,6 +574,16 @@ Watch Xcode console for these logs:
 ⚠️ Disk space getting low: 450MB available
 🚨 Watchdog detected recording stopped unexpectedly!
 ```
+
+Verify interruption recovery on a physical device:
+1. Start a recording with a short segment duration.
+2. Trigger a phone call, camera interruption, or temporary app backgrounding.
+3. Confirm the active segment is finalized and the readiness card reports the interruption/recovery state.
+4. Return the app to the foreground or end the interruption.
+5. Confirm recording resumes in a new segment without another tap.
+6. Confirm both the pre-interruption and post-recovery segments play correctly.
+
+The Simulator is suitable for compiling and UI checks, but not for validating camera capture, real phone-call interruptions, thermal pressure, or media-services resets.
 
 ### Test Background Recording
 1. Start recording
@@ -630,3 +674,4 @@ pod 'Google-Mobile-Ads-SDK'
 2. Verify StoreKit configuration file exists
 3. Check console for product loading errors
 4. Try "Restore Purchases"
+5. For offer codes, use an App Store Connect sandbox code or production code in the matching environment, then confirm `AppStore.sync()` refreshes the entitlement

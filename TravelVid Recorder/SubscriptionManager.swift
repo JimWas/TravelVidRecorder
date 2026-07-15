@@ -63,30 +63,6 @@ class SubscriptionManager: ObservableObject {
         #endif
     }
 
-    // MARK: - Promo Codes
-
-    private let validPromoCodes: Set<String> = [
-        "NASAEMPLOYEES",
-        "TRAVELVIPFREE",
-        "JIMWAS2025",
-    ]
-
-    /// Returns true and unlocks premium if the code is valid and unused.
-    @discardableResult
-    func redeemPromoCode(_ code: String) -> Bool {
-        let normalised = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard validPromoCodes.contains(normalised) else { return false }
-        isPremium = true
-        UserDefaults.standard.set(true, forKey: "isPremium")
-        UserDefaults.standard.set(normalised, forKey: "redeemedPromoCode")
-        print("🎟️ Promo code '\(normalised)' redeemed — premium unlocked")
-        return true
-    }
-
-    var redeemedPromoCode: String? {
-        UserDefaults.standard.string(forKey: "redeemedPromoCode")
-    }
-
     deinit {
         transactionListener?.cancel()
     }
@@ -95,11 +71,14 @@ class SubscriptionManager: ObservableObject {
 
     func loadProducts() async {
         isLoadingProducts = true
+        purchaseError = nil
         do {
             products = try await Product.products(for: [productID])
             if products.isEmpty {
                 print("StoreKit: No products returned for ID '\(productID)'. Check App Store Connect configuration.")
                 purchaseError = "Subscription not available. Please check your connection and try again."
+            } else {
+                purchaseError = nil
             }
         } catch {
             print("StoreKit: Failed to load products: \(error)")
@@ -134,8 +113,10 @@ class SubscriptionManager: ObservableObject {
                 let transaction = try checkVerified(verification)
                 await transaction.finish()
                 await updateSubscriptionStatus()
+                purchaseError = nil
 
             case .userCancelled:
+                purchaseError = nil
                 break
 
             case .pending:
@@ -155,6 +136,7 @@ class SubscriptionManager: ObservableObject {
         do {
             try await AppStore.sync()
             await updateSubscriptionStatus()
+            purchaseError = nil
         } catch {
             purchaseError = "Restore failed: \(error.localizedDescription)"
         }
@@ -164,6 +146,7 @@ class SubscriptionManager: ObservableObject {
         do {
             try await AppStore.sync()
             await updateSubscriptionStatus()
+            purchaseError = nil
         } catch {
             purchaseError = "Code redemption refresh failed: \(error.localizedDescription)"
         }

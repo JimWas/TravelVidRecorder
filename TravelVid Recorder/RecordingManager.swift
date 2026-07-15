@@ -1,5 +1,4 @@
 import Foundation
-import AVFoundation
 import Photos
 import UIKit
 import os
@@ -157,6 +156,52 @@ struct RecordingMetadata: Codable {
     let locationPath: [LocationPoint]?
 }
 
+// MARK: - Recording Reliability
+enum RecordingReliabilityLevel: Equatable {
+    case checking
+    case ready
+    case warning
+    case unavailable
+}
+
+struct RecordingReliabilityItem: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let detail: String
+    let level: RecordingReliabilityLevel
+}
+
+struct CompletedSegmentSummary: Equatable {
+    let filename: String
+    let duration: TimeInterval
+    let size: Int64
+    let completedAt: Date
+}
+
+struct RecordingReliabilityStatus: Equatable {
+    let level: RecordingReliabilityLevel
+    let items: [RecordingReliabilityItem]
+    let estimatedRemainingDuration: TimeInterval?
+    let lastSegment: CompletedSegmentSummary?
+
+    static let checking = RecordingReliabilityStatus(
+        level: .checking,
+        items: [],
+        estimatedRemainingDuration: nil,
+        lastSegment: nil
+    )
+
+    var canStartRecording: Bool { level != .unavailable }
+}
+
+enum RecordingRecoveryState: Equatable {
+    case idle
+    case recording
+    case interrupted(String)
+    case recovering(attempt: Int)
+    case failed(String)
+}
+
 // MARK: - RecordingManager
 @MainActor
 class RecordingManager: NSObject, ObservableObject {
@@ -171,6 +216,8 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var selectedResolution: Resolution = .p1080
     @Published var audioOn = true
     @Published var enableStabilization = false
+    @Published private(set) var reliabilityStatus: RecordingReliabilityStatus = .checking
+    @Published private(set) var recoveryState: RecordingRecoveryState = .idle
 
     // NEW: Popup toggle, display mode, and stop gesture
     @Published var showFakePopups = true
@@ -250,6 +297,10 @@ class RecordingManager: NSObject, ObservableObject {
     private var diskSpaceTimer: Timer?
     private var thermalStateObserver: NSObjectProtocol?
     private var lastRecordingErrorAt: Date?
+    private var lastCompletedSegment: CompletedSegmentSummary?
+    private var shouldResumeAfterInterruption = false
+    private var recoveryPending = false
+    private var recoveryTask: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -263,12 +314,166 @@ class RecordingManager: NSObject, ObservableObject {
         loadPersistedSettings()
         refreshStorageInfo()
         recordingHistory = loadHistory()
+        refreshReliabilityStatus()
     }
 
     func refreshStorageInfo() {
         let space = SafeRecordingHandler.shared.checkDiskSpace()
         availableStorageBytes = space.available
         totalStorageBytes = space.total
+    }
+
+    func refreshReliabilityStatus() {
+        refreshStorageInfo()
+
+        var items: [RecordingReliabilityItem] = []
+        var overall: RecordingReliabilityLevel = .ready
+
+        let cameraAuthorization = AVCaptureDevice.authorizationStatus(for: .video)
+        let cameraAvailable = bestDevice() != nil
+        let preferredCameraAvailable: Bool
+        if cameraPosition == .front {
+            preferredCameraAvailable = AVCaptureDevice.default(
+                .builtInWideAngleCamera,
+                for: .video,
+                position: .front
+            ) != nil
+        } else {
+            preferredCameraAvailable = AVCaptureDevice.default(
+                cameraType.avType,
+                for: .video,
+                position: .back
+            ) != nil
+        }
+        let cameraLevel: RecordingReliabilityLevel
+        let cameraDetail: String
+
+        switch cameraAuthorization {
+        case .authorized where cameraAvailable && preferredCameraAvailable:
+            cameraLevel = .ready
+            cameraDetail = cameraPosition == .front ? "Front camera ready" : "Back \(cameraType.rawValue) camera ready"
+        case .authorized where cameraAvailable:
+            cameraLevel = .warning
+            cameraDetail = "Standard camera ready · \(cameraType.rawValue) unavailable"
+        case .notDetermined:
+            cameraLevel = .warning
+            cameraDetail = "Permission will be requested when recording starts"
+        case .authorized:
+            cameraLevel = .unavailable
+            cameraDetail = "Selected camera is unavailable"
+        default:
+            cameraLevel = .unavailable
+            cameraDetail = "Camera access is disabled in Settings"
+        }
+        items.append(.init(id: "camera", title: "Camera", detail: cameraDetail, level: cameraLevel))
+        overall = combinedReliabilityLevel(overall, cameraLevel)
+
+        let microphoneAuthorization = AVCaptureDevice.authorizationStatus(for: .audio)
+        let microphoneLevel: RecordingReliabilityLevel
+        let microphoneDetail: String
+        if !audioOn {
+            microphoneLevel = .ready
+            microphoneDetail = "Audio recording is turned off"
+        } else {
+            switch microphoneAuthorization {
+            case .authorized:
+                microphoneLevel = .ready
+                microphoneDetail = "Recording audio"
+            case .notDetermined:
+                microphoneLevel = .warning
+                microphoneDetail = "Permission will be requested when recording starts"
+            default:
+                microphoneLevel = .warning
+                microphoneDetail = "Video will record without audio"
+            }
+        }
+        items.append(.init(id: "microphone", title: "Microphone", detail: microphoneDetail, level: microphoneLevel))
+        overall = combinedReliabilityLevel(overall, microphoneLevel)
+
+        let storageLevel: RecordingReliabilityLevel
+        if availableStorageBytes < 100 * 1_024 * 1_024 {
+            storageLevel = .unavailable
+        } else if availableStorageBytes < 500 * 1_024 * 1_024 {
+            storageLevel = .warning
+        } else {
+            storageLevel = .ready
+        }
+        let remaining = estimatedRemainingRecordingDuration()
+        let storageDetail = "\(formattedStorage(availableStorageBytes)) free" +
+            (remaining.map { " · about \(formattedDuration($0)) remaining" } ?? "")
+        items.append(.init(id: "storage", title: "Storage", detail: storageDetail, level: storageLevel))
+        overall = combinedReliabilityLevel(overall, storageLevel)
+
+        items.append(.init(
+            id: "segments",
+            title: "Segments",
+            detail: "Every \(formattedDuration(segmentLength))",
+            level: .ready
+        ))
+
+        let lastDetail: String
+        if let lastCompletedSegment {
+            lastDetail = "\(formattedClipDuration(lastCompletedSegment.duration)) · \(formattedStorage(lastCompletedSegment.size)) · \(lastCompletedSegment.completedAt.formatted(.relative(presentation: .named)))"
+        } else {
+            lastDetail = "No completed segment yet"
+        }
+        items.append(.init(id: "lastSegment", title: "Last saved", detail: lastDetail, level: .ready))
+
+        reliabilityStatus = RecordingReliabilityStatus(
+            level: overall,
+            items: items,
+            estimatedRemainingDuration: remaining,
+            lastSegment: lastCompletedSegment
+        )
+    }
+
+    private func combinedReliabilityLevel(
+        _ current: RecordingReliabilityLevel,
+        _ new: RecordingReliabilityLevel
+    ) -> RecordingReliabilityLevel {
+        if current == .unavailable || new == .unavailable { return .unavailable }
+        if current == .warning || new == .warning { return .warning }
+        if current == .checking || new == .checking { return .checking }
+        return .ready
+    }
+
+    private func estimatedRemainingRecordingDuration() -> TimeInterval? {
+        let recent = recordings.prefix(10).filter { $0.duration > 0 && $0.size > 0 }
+        let measuredBytes = recent.reduce(Int64(0)) { $0 + $1.size }
+        let measuredDuration = recent.reduce(0.0) { $0 + $1.duration }
+
+        let bytesPerSecond: Double
+        if measuredDuration > 0 && measuredBytes > 0 {
+            bytesPerSecond = Double(measuredBytes) / measuredDuration
+        } else {
+            switch selectedResolution {
+            case .p720: bytesPerSecond = 1_000_000
+            case .p1080: bytesPerSecond = 2_000_000
+            case .p4K: bytesPerSecond = 6_000_000
+            }
+        }
+
+        guard bytesPerSecond > 0 else { return nil }
+        return Double(max(0, availableStorageBytes - 100 * 1_024 * 1_024)) / bytesPerSecond
+    }
+
+    private func formattedStorage(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+
+    private func formattedDuration(_ duration: TimeInterval) -> String {
+        let totalMinutes = max(1, Int(duration / 60))
+        if totalMinutes < 60 { return "\(totalMinutes) min" }
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        return minutes == 0 ? "\(hours) hr" : "\(hours) hr \(minutes) min"
+    }
+
+    private func formattedClipDuration(_ duration: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(duration.rounded()))
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 
     private func loadPersistedSettings() {
@@ -395,10 +600,10 @@ class RecordingManager: NSObject, ObservableObject {
             }
         case .critical:
             print("🚨 Thermal state: CRITICAL - iOS may kill camera soon!")
-            // Force immediate segment save
             if isRecording {
                 print("🛑 Stopping recording due to critical thermal state")
                 stopRecording()
+                recoveryState = .failed("Recording stopped because the device became too hot")
             }
         @unknown default:
             break
@@ -419,9 +624,15 @@ class RecordingManager: NSObject, ObservableObject {
     // MARK: - Foreground Recovery
     @objc private func handleAppDidBecomeActive() {
         if isRecording {
-            // Verify recording is still actually running
-            verifyRecordingActive()
+            if captureSession?.isInterrupted == true {
+                recoveryState = .interrupted("Waiting for the camera interruption to end")
+            } else if recoveryPending {
+                beginRecordingRecovery(reason: "Returned to foreground")
+            } else {
+                verifyRecordingActive()
+            }
         }
+        refreshReliabilityStatus()
     }
 
     private func verifyRecordingActive() {
@@ -434,19 +645,21 @@ class RecordingManager: NSObject, ObservableObject {
 
         if !output.isRecording {
             print("🚨 Recording flag is true but movieOutput is not recording!")
-            print("🔄 Attempting to restart recording...")
-
-            // Recording silently stopped - try to restart
-            let url = nextURL()
-            activeSegmentURL = url
-            output.startRecording(to: url, recordingDelegate: self)
+            beginRecordingRecovery(reason: "Recording output stopped unexpectedly")
         } else {
             print("✅ Recording verified active")
+            recoveryState = .recording
         }
     }
 
     // MARK: - Session Interruption Handling
     @objc private func handleSessionInterruption(_ notification: Notification) {
+        if let sourceSession = notification.object as? AVCaptureSession,
+           let captureSession,
+           sourceSession !== captureSession {
+            return
+        }
+
         guard let userInfo = notification.userInfo,
               let reasonValue = userInfo[AVCaptureSessionInterruptionReasonKey] as? Int,
               let reason = AVCaptureSession.InterruptionReason(rawValue: reasonValue) else {
@@ -454,63 +667,75 @@ class RecordingManager: NSObject, ObservableObject {
         }
 
         print("⚠️ AVCaptureSession interrupted: \(reason)")
+        guard isRecording else { return }
+
+        shouldResumeAfterInterruption = true
+        recoveryPending = true
+        recoveryState = .interrupted(interruptionDescription(reason))
+        stopSegmentTimer()
+
+        if let output = movieOutput, output.isRecording, !isSegmenting {
+            isSegmenting = true
+            output.stopRecording()
+        }
 
         switch reason {
         case .videoDeviceNotAvailableInBackground:
-            // App went to background - recording continues, camera output paused
-            // This is normal and expected. Recording resumes when app returns.
-            print("📱 Camera paused (app in background) - recording continues")
+            print("📱 Camera paused by iOS in the background; preserving the completed segment")
         case .audioDeviceInUseByAnotherClient:
-            print("🎤 Audio device taken by another app - video continues")
-            // Recording continues without audio
+            print("🎤 Audio device taken by another app")
         case .videoDeviceInUseByAnotherClient:
             print("📷 Camera taken by another app")
-            // Don't stop immediately - wait to see if we get it back
-            // Only stop if interruption doesn't end within a few seconds
         case .videoDeviceNotAvailableWithMultipleForegroundApps:
             print("📱 Camera not available with multiple foreground apps")
-            // iPad multi-tasking - recording may be paused but don't stop
         case .videoDeviceNotAvailableDueToSystemPressure:
             print("🔥 System pressure - camera temporarily unavailable")
-            // Force save current segment but don't stop entirely
-            if isRecording && !isSegmenting {
-                print("📼 Saving segment due to system pressure")
-                rotateSegment()
-            }
         case .sensitiveContentMitigationActivated:
             print("⚠️ Sensitive content mitigation activated - camera output may be limited")
-            if isRecording && !isSegmenting {
-                print("📼 Saving segment due to sensitive content mitigation")
-                rotateSegment()
-            }
         @unknown default:
             print("❓ Unknown interruption reason")
         }
     }
 
     @objc private func handleSessionInterruptionEnded(_ notification: Notification) {
+        if let sourceSession = notification.object as? AVCaptureSession,
+           let captureSession,
+           sourceSession !== captureSession {
+            return
+        }
         print("✅ AVCaptureSession interruption ended")
-        // Session can resume - but we don't auto-resume recording for safety
+        guard isRecording, shouldResumeAfterInterruption else { return }
+        beginRecordingRecovery(reason: "Camera interruption ended")
     }
 
     @objc private func handleSessionRuntimeError(_ notification: Notification) {
+        if let sourceSession = notification.object as? AVCaptureSession,
+           let captureSession,
+           sourceSession !== captureSession {
+            return
+        }
         guard let error = notification.userInfo?[AVCaptureSessionErrorKey] as? AVError else {
             return
         }
 
         print("🚨 AVCaptureSession runtime error: \(error.localizedDescription)")
+        guard isRecording else { return }
 
-        // Try to restart session if possible
-        if error.code == .mediaServicesWereReset {
-            Task { @MainActor in
-                if isRecording {
-                    // Save current segment and try to restart
-                    print("📼 Attempting to restart recording after media services reset")
-                    movieOutput?.stopRecording()
-                    // Session will restart in delegate callback if isRecording is true
-                }
-            }
+        lastRecordingErrorAt = Date()
+        shouldResumeAfterInterruption = true
+        recoveryPending = true
+        recoveryState = .interrupted(error.localizedDescription)
+        stopSegmentTimer()
+
+        if let output = movieOutput, output.isRecording, !isSegmenting {
+            isSegmenting = true
+            output.stopRecording()
         }
+
+        beginRecordingRecovery(
+            reason: error.localizedDescription,
+            rebuildSession: error.code == .mediaServicesWereReset
+        )
     }
 
     @objc private func handleAudioSessionInterruption(_ notification: Notification) {
@@ -523,41 +748,135 @@ class RecordingManager: NSObject, ObservableObject {
         switch type {
         case .began:
             print("🔇 Audio session interrupted (phone call, Siri, etc.)")
+            if isRecording {
+                shouldResumeAfterInterruption = true
+                recoveryState = .interrupted("Audio interrupted")
+            }
         case .ended:
             print("🔊 Audio session interruption ended")
             guard isRecording else { return }
             let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-            if options.contains(.shouldResume) {
-                print("✅ Resuming recording after interruption")
-                Task { await resumeAfterInterruption() }
+            if options.contains(.shouldResume) || shouldResumeAfterInterruption {
+                beginRecordingRecovery(reason: "Audio interruption ended")
             }
         @unknown default:
             break
         }
     }
-    
-    private func resumeAfterInterruption() async {
-        // Reactivate audio session
-        try? AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
 
-        guard let session = captureSession, let output = movieOutput else { return }
+    private func interruptionDescription(_ reason: AVCaptureSession.InterruptionReason) -> String {
+        switch reason {
+        case .videoDeviceNotAvailableInBackground: return "Camera paused while app is in background"
+        case .audioDeviceInUseByAnotherClient: return "Microphone is being used by another app"
+        case .videoDeviceInUseByAnotherClient: return "Camera is being used by another app"
+        case .videoDeviceNotAvailableWithMultipleForegroundApps: return "Camera unavailable during multitasking"
+        case .videoDeviceNotAvailableDueToSystemPressure: return "Camera paused due to system pressure"
+        case .sensitiveContentMitigationActivated: return "Camera temporarily restricted by iOS"
+        @unknown default: return "Camera temporarily interrupted"
+        }
+    }
 
-        // If the capture session was stopped by the interruption, restart it
-        if !session.isRunning {
-            session.startRunning()
-            // Small delay to let the session stabilise before recording to a new segment
-            try? await Task.sleep(nanoseconds: 500_000_000)
+    private func beginRecordingRecovery(reason: String, rebuildSession: Bool = false) {
+        guard isRecording else { return }
+
+        recoveryTask?.cancel()
+        recoveryTask = Task { [weak self] in
+            guard let self else { return }
+
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+
+            for attempt in 1...3 {
+                guard self.isRecording, !Task.isCancelled else { return }
+                self.recoveryState = .recovering(attempt: attempt)
+
+                var finalizationChecks = 0
+                while self.isSegmenting && finalizationChecks < 20 {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    finalizationChecks += 1
+                }
+
+                guard UIApplication.shared.applicationState == .active else {
+                    self.recoveryState = .interrupted("Waiting for TravelVid to return to the foreground")
+                    return
+                }
+
+                if self.captureSession?.isInterrupted == true {
+                    self.recoveryState = .interrupted("Waiting for the camera interruption to end")
+                    return
+                }
+
+                try? AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+
+                let needsRebuild = rebuildSession || attempt > 1 || self.captureSession == nil || self.movieOutput == nil
+                let sessionReady = await self.makeCaptureSessionReady(rebuild: needsRebuild)
+
+                if sessionReady, let output = self.movieOutput {
+                    if !output.isRecording {
+                        let url = self.nextURL()
+                        self.activeSegmentURL = url
+                        self.activeSegmentStartedAt = Date()
+                        self.isSegmenting = false
+                        self.recoveryPending = false
+                        output.startRecording(to: url, recordingDelegate: self)
+                    } else {
+                        self.recoveryPending = false
+                    }
+
+                    self.shouldResumeAfterInterruption = false
+                    self.recoveryState = .recording
+                    self.startSegmentTimer()
+                    self.startWatchdogTimer()
+                    self.startDiskSpaceMonitoring()
+                    self.refreshReliabilityStatus()
+                    print("▶️ Recording recovered in a new segment after: \(reason)")
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    return
+                }
+
+                try? await Task.sleep(for: .milliseconds(500 * attempt))
+            }
+
+            let message = "Unable to restart the camera after \(reason.lowercased())"
+            self.recoveryPending = false
+            self.shouldResumeAfterInterruption = false
+            self.stopRecording()
+            self.recoveryState = .failed(message)
+            self.refreshReliabilityStatus()
+            print("❌ \(message)")
+        }
+    }
+
+    private func makeCaptureSessionReady(rebuild: Bool) async -> Bool {
+        if rebuild {
+            if let oldSession = captureSession, oldSession.isRunning {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        oldSession.stopRunning()
+                        continuation.resume()
+                    }
+                }
+            }
+            captureSession = nil
+            movieOutput = nil
+            videoInput = nil
+            audioInput = nil
+            return await prepareSession()
         }
 
-        // Start a new segment so the interrupted segment is cleanly sealed
-        guard isRecording, !output.isRecording else { return }
-        let url = nextURL()
-        activeSegmentURL = url
-        activeSegmentStartedAt = Date()
-        output.startRecording(to: url, recordingDelegate: self)
-        print("▶️ Recording resumed in new segment after interruption")
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        guard let session = captureSession else { return false }
+        if session.isRunning { return true }
+
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                session.startRunning()
+                let running = session.isRunning
+                DispatchQueue.main.async {
+                    continuation.resume(returning: running)
+                }
+            }
+        }
     }
 
     @objc private func handleSafeStop() {
@@ -774,11 +1093,23 @@ class RecordingManager: NSObject, ObservableObject {
     }
 
     // MARK: - Recording
-    func startRecording() {
-        guard let output = movieOutput else { return }
+    @discardableResult
+    func startRecording() -> Bool {
+        guard let output = movieOutput else { return false }
+
+        refreshReliabilityStatus()
+        guard reliabilityStatus.canStartRecording else {
+            print("⛔️ Recording start blocked by reliability checks")
+            return false
+        }
 
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
 
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveryPending = false
+        shouldResumeAfterInterruption = false
+        recoveryState = .recording
         isRecording = true
         isSegmenting = false
         sessionStartDate = Date()
@@ -823,11 +1154,18 @@ class RecordingManager: NSObject, ObservableObject {
         startSegmentTimer()
         startWatchdogTimer()
         startDiskSpaceMonitoring()
+        return true
     }
 
     func stopRecording() {
         guard isRecording else { return }
         isRecording = false
+
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveryPending = false
+        shouldResumeAfterInterruption = false
+        recoveryState = .idle
 
         UINotificationFeedbackGenerator().notificationOccurred(.success)
 
@@ -857,6 +1195,7 @@ class RecordingManager: NSObject, ObservableObject {
             saveHistory(recordingHistory)
         }
         sessionStartDate = nil
+        refreshReliabilityStatus()
 
         print("🛑 Recording stopped and all timers invalidated")
     }
@@ -918,17 +1257,9 @@ class RecordingManager: NSObject, ObservableObject {
 
         if !output.isRecording && !isSegmenting {
             print("🚨 Watchdog detected recording stopped unexpectedly!")
-            print("🔄 Attempting automatic restart...")
-
-            guard canAttemptRestart() else {
-                print("ℹ️ Watchdog: restart blocked (app not active, session not running, or cooldown)")
-                return
-            }
-
-            // Try to restart
-            let url = nextURL()
-            activeSegmentURL = url
-            output.startRecording(to: url, recordingDelegate: self)
+            recoveryPending = true
+            beginRecordingRecovery(reason: "Watchdog detected a stopped recording")
+            return
         }
 
         // Timer-based rotation can occasionally be delayed when the recorder is busy.
@@ -983,10 +1314,13 @@ class RecordingManager: NSObject, ObservableObject {
     private func checkDiskSpaceAndWarn() {
         let diskSpace = SafeRecordingHandler.shared.checkDiskSpace()
         let availableMB = diskSpace.available / 1024 / 1024
+        refreshReliabilityStatus()
 
         if diskSpace.available < 100 * 1024 * 1024 { // Less than 100MB
             print("🚨 CRITICAL: Only \(availableMB)MB disk space left! Stopping recording.")
             stopRecording()
+            recoveryState = .failed("Recording stopped because device storage is critically low")
+            refreshReliabilityStatus()
         } else if diskSpace.available < 250 * 1024 * 1024 { // Less than 250MB
             print("⚠️ WARNING: Low disk space (\(availableMB)MB) - forcing segment save")
             rotateSegment()
@@ -1135,6 +1469,7 @@ class RecordingManager: NSObject, ObservableObject {
         else {
             recordings = []
             isLoadingRecordings = false
+            refreshReliabilityStatus()
             return
         }
 
@@ -1175,8 +1510,16 @@ class RecordingManager: NSObject, ObservableObject {
         }
 
         recordings = list.sorted { ($0.creation ?? .distantPast) > ($1.creation ?? .distantPast) }
+        if let latest = recordings.first {
+            lastCompletedSegment = CompletedSegmentSummary(
+                filename: latest.name,
+                duration: latest.duration,
+                size: latest.size,
+                completedAt: latest.creation ?? Date()
+            )
+        }
         isLoadingRecordings = false
-        refreshStorageInfo()
+        refreshReliabilityStatus()
     }
 
     // MARK: - Export
@@ -1218,7 +1561,18 @@ class RecordingManager: NSObject, ObservableObject {
         var metadata = loadMetadata()
         metadata.removeValue(forKey: rec.name)
         saveMetadata(metadata)
+        if lastCompletedSegment?.filename == rec.name {
+            lastCompletedSegment = recordings.first.map {
+                CompletedSegmentSummary(
+                    filename: $0.name,
+                    duration: $0.duration,
+                    size: $0.size,
+                    completedAt: $0.creation ?? Date()
+                )
+            }
+        }
         refreshStorageInfo()
+        refreshReliabilityStatus()
     }
     
     deinit {
@@ -1259,11 +1613,15 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
                     // Continue to check if file has any usable content
                 } else {
                     print("❌ Recording failed completely: \(errorDomain) code \(errorCode)")
-                    // Clean up failed recording file
                     try? FileManager.default.removeItem(at: outputFileURL)
                     self.isSegmenting = false
                     self.activeSegmentStartedAt = nil
-                    SafeRecordingHandler.shared.endRecordingSession()
+                    if self.isRecording {
+                        self.recoveryPending = true
+                        self.beginRecordingRecovery(reason: error.localizedDescription)
+                    } else {
+                        SafeRecordingHandler.shared.endRecordingSession()
+                    }
                     return
                 }
             }
@@ -1273,6 +1631,10 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
                 print("❌ Recording file doesn't exist: \(outputFileURL.lastPathComponent)")
                 self.isSegmenting = false
                 self.activeSegmentStartedAt = nil
+                if self.isRecording {
+                    self.recoveryPending = true
+                    self.beginRecordingRecovery(reason: "Completed segment file was missing")
+                }
                 return
             }
 
@@ -1292,7 +1654,7 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
                 self.isSegmenting = false
 
                 // Try to restart recording if we're still supposed to be recording
-                if self.isRecording {
+                if self.isRecording && !self.recoveryPending {
                     let newURL = self.nextURL()
                     self.activeSegmentStartedAt = Date()
                     output.startRecording(to: newURL, recordingDelegate: self)
@@ -1307,6 +1669,14 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
             let attrs = try? FileManager.default.attributesOfItem(atPath: outputFileURL.path)
             let size = attrs?[.size] as? Int64 ?? 0
             let creation = attrs?[.creationDate] as? Date
+
+            self.lastCompletedSegment = CompletedSegmentSummary(
+                filename: outputFileURL.lastPathComponent,
+                duration: duration,
+                size: size,
+                completedAt: Date()
+            )
+            self.refreshReliabilityStatus()
 
             // Verify file size is reasonable (at least 10KB for any video)
             if size < 10_000 {
@@ -1347,12 +1717,21 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
             print("✅ Saved segment: \(outputFileURL.lastPathComponent) (\(Int(duration))s, \(size / 1024)KB)")
 
             if self.isRecording {
-                let newURL = self.nextURL()
-                self.activeSegmentStartedAt = Date()
-                output.startRecording(to: newURL, recordingDelegate: self)
-                self.activeSegmentURL = newURL
-                self.isSegmenting = false
-                self.startSegmentTimer()
+                if self.recoveryPending {
+                    self.activeSegmentStartedAt = nil
+                    self.isSegmenting = false
+                    print("⏸️ Segment saved; waiting for the camera interruption to end")
+                } else if !output.isRecording {
+                    let newURL = self.nextURL()
+                    self.activeSegmentStartedAt = Date()
+                    output.startRecording(to: newURL, recordingDelegate: self)
+                    self.activeSegmentURL = newURL
+                    self.isSegmenting = false
+                    self.startSegmentTimer()
+                } else {
+                    // Recovery already started the next segment while metadata was finishing.
+                    self.isSegmenting = false
+                }
             } else {
                 // Recording stopped - end background task immediately
                 self.activeSegmentStartedAt = nil

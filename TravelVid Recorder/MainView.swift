@@ -33,6 +33,7 @@ struct MainView: View {
     @State private var showDeleteAllAlert = false
     @State private var showDeleteSelectedAlert = false
     @State private var showPaywall = false
+    @State private var showRecordingModePicker = false
     @State private var isShowingOfferCodeRedemption = false
     @State private var showSubscriptionError = false
     
@@ -57,13 +58,6 @@ struct MainView: View {
     @State private var showStorageError = false
     @State private var storageErrorMessage = ""
 
-    // Promo code
-    @State private var showPromoSheet = false
-    @State private var promoCodeInput = ""
-    @State private var promoResult: PromoResult? = nil
-
-    enum PromoResult { case success, invalid }
-    
     // Map State
     @State private var selectedMapRecording: Recording?
 
@@ -102,6 +96,9 @@ struct MainView: View {
                         // Advanced Settings
                         advancedSettingsSection
 
+                        // Passive preflight status; recording still starts with one tap.
+                        recordingReliabilitySection
+
                         // Big Action Button
                         startRecordingButton
 
@@ -127,6 +124,7 @@ struct MainView: View {
             .navigationBarHidden(true)
             .onAppear {
                 AdMobManager.shared.initializeAdMob()
+                manager.refreshReliabilityStatus()
                 if !hasCompletedOnboarding {
                     showOnboarding = true
                 }
@@ -150,6 +148,7 @@ struct MainView: View {
                     NotificationManager.shared.scheduleUnsavedVideosNotification(count: manager.recordings.count)
                 case .active:
                     NotificationManager.shared.clearUnsavedVideosNotification()
+                    manager.refreshReliabilityStatus()
                 @unknown default:
                     break
                 }
@@ -167,22 +166,29 @@ struct MainView: View {
             .sheet(isPresented: $showPaywall) {
                 PaywallView()
             }
+            .sheet(isPresented: $showRecordingModePicker) {
+                RecordingModePickerView(
+                    selectedMode: manager.recordingDisplayMode,
+                    isPremium: subscriptionManager.isPremium
+                ) { mode in
+                    showRecordingModePicker = false
+
+                    if mode.requiresPremium && !subscriptionManager.isPremium {
+                        // Let the mode sheet finish dismissing before presenting the paywall.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            showPaywall = true
+                        }
+                    } else {
+                        manager.recordingDisplayMode = mode
+                    }
+                }
+                .presentationDetents([.medium, .large])
+            }
             .sheet(isPresented: $showHistory) {
                 RecordingHistoryView(log: manager.recordingHistory) {
                     manager.clearHistory()
                 }
             }
-            .sheet(isPresented: $showPromoSheet) {
-                PromoCodeSheet(
-                    code: $promoCodeInput,
-                    result: $promoResult,
-                    onRedeem: {
-                        let ok = subscriptionManager.redeemPromoCode(promoCodeInput)
-                        promoResult = ok ? .success : .invalid
-                    }
-                )
-            }
-
             // MARK: - Alerts
             
             // 1. Export All Alert (With Ad Logic)
@@ -294,19 +300,26 @@ struct MainView: View {
         }
         // Reconfigure capture session when settings change (if not recording)
         .onChange(of: manager.cameraPosition) {
+            manager.refreshReliabilityStatus()
             Task { await manager.reconfigureSessionIfNeeded() }
         }
         .onChange(of: manager.cameraType) {
+            manager.refreshReliabilityStatus()
             Task { await manager.reconfigureSessionIfNeeded() }
         }
         .onChange(of: manager.selectedResolution) {
+            manager.refreshReliabilityStatus()
             Task { await manager.reconfigureSessionIfNeeded() }
         }
         .onChange(of: manager.audioOn) {
+            manager.refreshReliabilityStatus()
             Task { await manager.reconfigureSessionIfNeeded() }
         }
         .onChange(of: manager.enableStabilization) {
             Task { await manager.reconfigureSessionIfNeeded() }
+        }
+        .onChange(of: manager.segmentLength) {
+            manager.refreshReliabilityStatus()
         }
         // Load Video Task
         .onChange(of: videoPickerItem) {
@@ -457,27 +470,8 @@ struct MainView: View {
 
     private var heroPreviewSection: some View {
         VStack(spacing: 12) {
-            // Mode picker in a scrollable menu style for 4 options
-            Menu {
-                ForEach(RecordingDisplayMode.allCases) { mode in
-                    Button {
-                        if mode.requiresPremium && !subscriptionManager.isPremium {
-                            showPaywall = true
-                        } else {
-                            manager.recordingDisplayMode = mode
-                        }
-                    } label: {
-                        HStack {
-                            Text(mode.rawValue)
-                            if mode.requiresPremium && !subscriptionManager.isPremium {
-                                Image(systemName: "lock.fill")
-                            }
-                            if manager.recordingDisplayMode == mode {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
+            Button {
+                showRecordingModePicker = true
             } label: {
                 HStack {
                     Text(manager.recordingDisplayMode.rawValue)
@@ -490,7 +484,9 @@ struct MainView: View {
                 .padding()
                 .background(Color(uiColor: .secondarySystemBackground))
                 .cornerRadius(12)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .padding(.horizontal)
             
             ZStack {
@@ -502,6 +498,7 @@ struct MainView: View {
                             .aspectRatio(contentMode: .fill)
                             .frame(height: 220)
                             .clipped()
+                            .allowsHitTesting(false)
                     } else {
                         placeholderView(icon: "photo", text: "Select Cover Image")
                     }
@@ -511,6 +508,7 @@ struct MainView: View {
                         VideoThumbnailView(videoURL: videoURL)
                             .frame(height: 220)
                             .clipped()
+                            .allowsHitTesting(false)
                     } else {
                         placeholderView(icon: "video.fill", text: "Select Video", color: .purple)
                     }
@@ -926,9 +924,7 @@ struct MainView: View {
                 .buttonStyle(.borderedProminent)
 
                 Button("Redeem Code") {
-                    promoCodeInput = ""
-                    promoResult = nil
-                    showPromoSheet = true
+                    isShowingOfferCodeRedemption = true
                 }
                 .buttonStyle(.bordered)
             }
@@ -937,6 +933,104 @@ struct MainView: View {
         .background(Color.white)
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+
+    private var recordingReliabilitySection: some View {
+        let status = manager.reliabilityStatus
+
+        return VStack(spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: reliabilityIcon(for: status.level))
+                    .foregroundStyle(reliabilityColor(for: status.level))
+                Text("Recording Readiness")
+                    .font(.headline)
+                Spacer()
+                Text(reliabilityTitle(for: status.level))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(reliabilityColor(for: status.level))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(reliabilityColor(for: status.level).opacity(0.12))
+                    .clipShape(Capsule())
+            }
+
+            if case .recovering(let attempt) = manager.recoveryState {
+                reliabilityNotice(
+                    icon: "arrow.clockwise",
+                    text: "Recovering camera connection (attempt \(attempt) of 3)",
+                    color: .orange
+                )
+            } else if case .interrupted(let message) = manager.recoveryState {
+                reliabilityNotice(icon: "pause.circle.fill", text: message, color: .orange)
+            } else if case .failed(let message) = manager.recoveryState {
+                reliabilityNotice(icon: "exclamationmark.triangle.fill", text: message, color: .red)
+            }
+
+            VStack(spacing: 12) {
+                ForEach(status.items) { item in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: reliabilityIcon(for: item.level))
+                            .font(.caption)
+                            .foregroundStyle(reliabilityColor(for: item.level))
+                            .frame(width: 18, height: 18)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.title)
+                                .font(.subheadline.weight(.semibold))
+                            Text(item.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+
+    private func reliabilityNotice(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+            Text(text)
+                .font(.caption.weight(.medium))
+            Spacer()
+        }
+        .foregroundStyle(color)
+        .padding(10)
+        .background(color.opacity(0.1))
+        .cornerRadius(10)
+    }
+
+    private func reliabilityTitle(for level: RecordingReliabilityLevel) -> String {
+        switch level {
+        case .checking: return "Checking"
+        case .ready: return "Ready"
+        case .warning: return "Ready with warning"
+        case .unavailable: return "Unavailable"
+        }
+    }
+
+    private func reliabilityIcon(for level: RecordingReliabilityLevel) -> String {
+        switch level {
+        case .checking: return "arrow.clockwise"
+        case .ready: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.circle.fill"
+        case .unavailable: return "xmark.circle.fill"
+        }
+    }
+
+    private func reliabilityColor(for level: RecordingReliabilityLevel) -> Color {
+        switch level {
+        case .checking: return .secondary
+        case .ready: return .green
+        case .warning: return .orange
+        case .unavailable: return .red
+        }
     }
 
     // Custom Mini Menu Builder
@@ -959,7 +1053,13 @@ struct MainView: View {
     }
     
     private var startRecordingButton: some View {
-        Button {
+        let displayModeReady = !(
+            (manager.recordingDisplayMode == .coverImage && coverImage == nil) ||
+            (manager.recordingDisplayMode == .videoPlayback && manager.selectedVideoURL == nil)
+        )
+        let canStart = displayModeReady && manager.reliabilityStatus.canStartRecording
+
+        return Button {
             showRecorder = true
         } label: {
             HStack {
@@ -970,18 +1070,11 @@ struct MainView: View {
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
             .frame(height: 55)
-            .background(
-                (manager.recordingDisplayMode == .coverImage && coverImage == nil) ||
-                (manager.recordingDisplayMode == .videoPlayback && manager.selectedVideoURL == nil)
-                ? Color.gray : Color.red
-            )
+            .background(canStart ? Color.red : Color.gray)
             .cornerRadius(16)
             .shadow(color: .red.opacity(0.3), radius: 10, y: 5)
         }
-        .disabled(
-            (manager.recordingDisplayMode == .coverImage && coverImage == nil) ||
-            (manager.recordingDisplayMode == .videoPlayback && manager.selectedVideoURL == nil)
-        )
+        .disabled(!canStart)
     }
     
     private var recordingsGallerySection: some View {
@@ -1312,6 +1405,71 @@ struct MainView: View {
 // MARK: - Video Helpers
 import UniformTypeIdentifiers
 import AVKit
+
+private struct RecordingModePickerView: View {
+    let selectedMode: RecordingDisplayMode
+    let isPremium: Bool
+    let onSelect: (RecordingDisplayMode) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(RecordingDisplayMode.allCases) { mode in
+                Button {
+                    onSelect(mode)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: iconName(for: mode))
+                            .frame(width: 28)
+                            .foregroundStyle(.tint)
+
+                        Text(mode.rawValue)
+                            .foregroundStyle(.primary)
+
+                        Spacer()
+
+                        if mode.requiresPremium && !isPremium {
+                            Image(systemName: "lock.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if mode == selectedMode {
+                            Image(systemName: "checkmark")
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("Recording Mode")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func iconName(for mode: RecordingDisplayMode) -> String {
+        switch mode {
+        case .coverImage: return "photo"
+        case .videoPlayback: return "play.rectangle.fill"
+        case .fakeCall: return "phone.fill"
+        case .tetris: return "gamecontroller.fill"
+        case .flappyBird: return "bird.fill"
+        case .bitcoin: return "bitcoinsign.circle.fill"
+        case .calculator: return "plus.forwardslash.minus"
+        case .ledBanner: return "textformat"
+        case .currencyConverter: return "arrow.left.arrow.right"
+        case .worldClock: return "clock.fill"
+        }
+    }
+}
 
 struct Movie: Transferable {
     let url: URL
@@ -1748,89 +1906,5 @@ struct VideoPreviewView: View {
     private func formatSize(_ bytes: Int64) -> String {
         let mb = Double(bytes) / (1024 * 1024)
         return String(format: "%.1f MB", mb)
-    }
-}
-
-// MARK: - Promo Code Sheet
-
-struct PromoCodeSheet: View {
-    @Binding var code: String
-    @Binding var result: MainView.PromoResult?
-    let onRedeem: () -> Void
-    @Environment(\.dismiss) private var dismiss
-    @FocusState private var fieldFocused: Bool
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 28) {
-                Image(systemName: "ticket.fill")
-                    .font(.system(size: 52))
-                    .foregroundColor(.accentColor)
-
-                VStack(spacing: 8) {
-                    Text("Redeem Promo Code")
-                        .font(.title2.bold())
-                    Text("Enter a promo code to unlock premium features.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                TextField("Enter code", text: $code)
-                    .textInputAutocapitalization(.characters)
-                    .autocorrectionDisabled()
-                    .focused($fieldFocused)
-                    .padding()
-                    .background(Color(uiColor: .secondarySystemBackground))
-                    .cornerRadius(12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                result == .invalid ? Color.red :
-                                result == .success ? Color.green : Color.clear,
-                                lineWidth: 1.5
-                            )
-                    )
-
-                if let result {
-                    HStack(spacing: 6) {
-                        Image(systemName: result == .success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        Text(result == .success ? "Code accepted! Premium unlocked." : "Invalid code. Please try again.")
-                    }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(result == .success ? .green : .red)
-                }
-
-                Button {
-                    if result == .success {
-                        dismiss()
-                    } else {
-                        onRedeem()
-                    }
-                } label: {
-                    Text(result == .success ? "Done" : "Redeem")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(code.trimmingCharacters(in: .whitespaces).isEmpty ? Color.gray : Color.accentColor)
-                        .cornerRadius(14)
-                }
-                .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty && result == nil)
-
-                Spacer()
-            }
-            .padding(28)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-            .onAppear { fieldFocused = true }
-            .onChange(of: code) { _, _ in
-                if result == .invalid { result = nil }
-            }
-        }
     }
 }

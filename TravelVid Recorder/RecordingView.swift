@@ -90,6 +90,14 @@ struct RecordingView: View {
             case .worldClock:
                 WorldClockView()
                     .ignoresSafeArea(.all)
+
+            case .travelDashboard:
+                TravelDashboardView(
+                    speedUnit: manager.travelSpeedUnit,
+                    audioLevelDB: manager.audioLevelDB,
+                    audioEnabled: manager.audioOn,
+                    isPreview: false
+                )
             }
 
             // POPUP (only if enabled)

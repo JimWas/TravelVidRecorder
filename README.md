@@ -23,6 +23,7 @@ Keep recording while your screen shows something completely unrelated.
 | LED Banner | | ✓ |
 | Currency Converter | | ✓ |
 | World Clock | | ✓ |
+| Travel Dashboard | | ✓ |
 
 ### Recording
 - **Resolutions**: 720p, 1080p, 4K
@@ -32,6 +33,7 @@ Keep recording while your screen shows something completely unrelated.
 - **Stabilization**: optional video stabilization
 - **Audio toggle**: record with or without audio
 - **Automatic recovery**: a unified recovery flow handles camera/audio interruptions, runtime errors, and watchdog-detected stalls
+- **Travel Dashboard**: premium live view with time, MPH/KPH speed, compass heading, relative microphone level, and a following location map
 
 Recording Readiness does not add another confirmation screen or required tap. Warnings remain one-tap starts; recording is blocked only when the camera is unavailable or storage is critically low.
 
@@ -138,6 +140,7 @@ TravelVid Recorder/
 ├── CalculatorView.swift             # Functional calculator
 ├── BitcoinPriceView.swift           # Bitcoin price tracker
 ├── WorldClockView.swift             # Live world clock (44 cities)
+├── TravelDashboardView.swift        # Live time, speed, compass, noise, and map dashboard
 ├── LoopingVideoPlayerView.swift     # Seamless looping video player
 └── Assets.xcassets/                 # App icons, images
 ```

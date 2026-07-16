@@ -89,6 +89,9 @@ struct MainView: View {
 
                         // Hero Section (Image/Tetris/FlappyBird)
                         heroPreviewSection
+
+                        // Primary thumb-reach action directly below the selected mode preview.
+                        startRecordingButton
                         
                         // Main Settings Card
                         configurationSection
@@ -99,7 +102,7 @@ struct MainView: View {
                         // Passive preflight status; recording still starts with one tap.
                         recordingReliabilitySection
 
-                        // Big Action Button
+                        // Repeated action for users reviewing all settings before recording.
                         startRecordingButton
 
                         // Premium entry point (always visible for App Review discoverability)
@@ -547,6 +550,15 @@ struct MainView: View {
 
                 case .worldClock:
                     placeholderView(icon: "clock.fill", text: "World Clock Active", color: .cyan)
+
+                case .travelDashboard:
+                    TravelDashboardView(
+                        speedUnit: manager.travelSpeedUnit,
+                        audioLevelDB: nil,
+                        audioEnabled: manager.audioOn,
+                        isPreview: true
+                    )
+                    .frame(height: 220)
                 }
 
                 // Overlay Button for Image Picker
@@ -757,6 +769,22 @@ struct MainView: View {
                 }
                 .tint(.blue)
 
+                if manager.recordingDisplayMode == .travelDashboard {
+                    HStack {
+                        Label("Speed Unit", systemImage: "speedometer")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Picker("Speed Unit", selection: $manager.travelSpeedUnit) {
+                            ForEach(TravelSpeedUnit.allCases) { unit in
+                                Text(unit.rawValue).tag(unit)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 150)
+                    }
+                }
+
                 // Stabilization Toggle
                 Toggle(isOn: $manager.enableStabilization) {
                     Label("Stabilization", systemImage: "waveform.path")
@@ -839,7 +867,8 @@ struct MainView: View {
                     .background(Color(uiColor: .secondarySystemBackground))
                     .cornerRadius(12)
 
-                    VStack(alignment: .leading, spacing: 10) {
+                    if manager.recordingDisplayMode == .ledBanner {
+                        VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 12) {
                             Image(systemName: "textformat")
                                 .font(.title3)
@@ -883,11 +912,12 @@ struct MainView: View {
                                 .tint(.green)
                         }
                     }
-                    .padding(12)
-                    .background(Color(uiColor: .secondarySystemBackground))
-                    .cornerRadius(12)
-                    .disabled(!subscriptionManager.isPremium)
-                    .opacity(subscriptionManager.isPremium ? 1 : 0.6)
+                        .padding(12)
+                        .background(Color(uiColor: .secondarySystemBackground))
+                        .cornerRadius(12)
+                        .disabled(!subscriptionManager.isPremium)
+                        .opacity(subscriptionManager.isPremium ? 1 : 0.6)
+                    }
                 }
                 .padding(.top, 8)
             } label: {
@@ -1467,6 +1497,7 @@ private struct RecordingModePickerView: View {
         case .ledBanner: return "textformat"
         case .currencyConverter: return "arrow.left.arrow.right"
         case .worldClock: return "clock.fill"
+        case .travelDashboard: return "location.north.circle.fill"
         }
     }
 }

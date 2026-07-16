@@ -52,6 +52,7 @@ enum RecordingDisplayMode: String, CaseIterable, Identifiable {
     case ledBanner = "LED Banner"
     case currencyConverter = "Currency Converter"
     case worldClock = "World Clock"
+    case travelDashboard = "Travel Dashboard"
 
     var id: String { rawValue }
 
@@ -60,8 +61,22 @@ enum RecordingDisplayMode: String, CaseIterable, Identifiable {
         switch self {
         case .coverImage, .tetris:
             return false
-        case .videoPlayback, .fakeCall, .flappyBird, .bitcoin, .calculator, .ledBanner, .currencyConverter, .worldClock:
+        case .videoPlayback, .fakeCall, .flappyBird, .bitcoin, .calculator, .ledBanner, .currencyConverter, .worldClock, .travelDashboard:
             return true
+        }
+    }
+}
+
+enum TravelSpeedUnit: String, CaseIterable, Identifiable {
+    case mph = "MPH"
+    case kph = "KPH"
+
+    var id: String { rawValue }
+
+    func convert(metersPerSecond: CLLocationSpeed) -> Double {
+        switch self {
+        case .mph: return metersPerSecond * 2.236_936
+        case .kph: return metersPerSecond * 3.6
         }
     }
 }
@@ -202,6 +217,99 @@ enum RecordingRecoveryState: Equatable {
     case failed(String)
 }
 
+private final class AudioLevelProcessor: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+    static let processingQueue = DispatchQueue(
+        label: "com.jimwas.travelvid.audioLevel",
+        qos: .userInteractive
+    )
+
+    private let onLevel: @MainActor (Float) -> Void
+    private var smoothedLevel: Float = -80
+    private var lastPublishedAt: TimeInterval = 0
+
+    init(onLevel: @escaping @MainActor (Float) -> Void) {
+        self.onLevel = onLevel
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastPublishedAt >= 0.125 else { return }
+        lastPublishedAt = now
+
+        guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee,
+              streamDescription.mFormatID == kAudioFormatLinearPCM else { return }
+
+        let maximumBuffers = max(1, Int(streamDescription.mChannelsPerFrame))
+        let bufferList = AudioBufferList.allocate(maximumBuffers: maximumBuffers)
+        defer { bufferList.unsafeMutablePointer.deallocate() }
+
+        var retainedBlockBuffer: CMBlockBuffer?
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: bufferList.unsafeMutablePointer,
+            bufferListSize: AudioBufferList.sizeInBytes(maximumBuffers: maximumBuffers),
+            blockBufferAllocator: kCFAllocatorDefault,
+            blockBufferMemoryAllocator: kCFAllocatorDefault,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            blockBufferOut: &retainedBlockBuffer
+        )
+        guard status == noErr else { return }
+
+        let isFloat = streamDescription.mFormatFlags & kAudioFormatFlagIsFloat != 0
+        let isSignedInteger = streamDescription.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
+        var sumSquares: Double = 0
+        var sampleCount = 0
+
+        for buffer in bufferList {
+            guard let data = buffer.mData else { continue }
+
+            if isFloat && streamDescription.mBitsPerChannel == 32 {
+                let count = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
+                let samples = data.assumingMemoryBound(to: Float.self)
+                for index in 0..<count {
+                    let sample = Double(samples[index])
+                    sumSquares += sample * sample
+                }
+                sampleCount += count
+            } else if isSignedInteger && streamDescription.mBitsPerChannel == 16 {
+                let count = Int(buffer.mDataByteSize) / MemoryLayout<Int16>.size
+                let samples = data.assumingMemoryBound(to: Int16.self)
+                for index in 0..<count {
+                    let sample = Double(samples[index]) / Double(Int16.max)
+                    sumSquares += sample * sample
+                }
+                sampleCount += count
+            } else if isSignedInteger && streamDescription.mBitsPerChannel == 32 {
+                let count = Int(buffer.mDataByteSize) / MemoryLayout<Int32>.size
+                let samples = data.assumingMemoryBound(to: Int32.self)
+                for index in 0..<count {
+                    let sample = Double(samples[index]) / Double(Int32.max)
+                    sumSquares += sample * sample
+                }
+                sampleCount += count
+            }
+        }
+
+        guard sampleCount > 0 else { return }
+
+        let rms = sqrt(sumSquares / Double(sampleCount))
+        let measuredLevel = Float(max(-80, min(0, 20 * log10(max(rms, 0.000_1)))))
+        smoothedLevel = (smoothedLevel * 0.72) + (measuredLevel * 0.28)
+
+        let publishedLevel = smoothedLevel
+
+        Task { @MainActor [onLevel] in
+            onLevel(publishedLevel)
+        }
+    }
+}
+
 // MARK: - RecordingManager
 @MainActor
 class RecordingManager: NSObject, ObservableObject {
@@ -220,7 +328,11 @@ class RecordingManager: NSObject, ObservableObject {
     @Published private(set) var recoveryState: RecordingRecoveryState = .idle
 
     // NEW: Popup toggle, display mode, and stop gesture
-    @Published var showFakePopups = true
+    @Published var showFakePopups = true {
+        didSet {
+            UserDefaults.standard.set(showFakePopups, forKey: "showFakePopups")
+        }
+    }
     @Published var recordingDisplayMode: RecordingDisplayMode = .coverImage
     @Published var stopGesture: StopRecordingGesture = .fiveTaps
     @Published var holdDuration: Int = 2 // 1-10 seconds for tap & hold gesture
@@ -263,6 +375,12 @@ class RecordingManager: NSObject, ObservableObject {
             UserDefaults.standard.set(converterAmount, forKey: "converterAmount")
         }
     }
+    @Published var travelSpeedUnit: TravelSpeedUnit = .mph {
+        didSet {
+            UserDefaults.standard.set(travelSpeedUnit.rawValue, forKey: "travelSpeedUnit")
+        }
+    }
+    @Published private(set) var audioLevelDB: Float?
     @Published var stealthBrightness: Bool = false {
         didSet {
             UserDefaults.standard.set(stealthBrightness, forKey: "stealthBrightness")
@@ -278,6 +396,10 @@ class RecordingManager: NSObject, ObservableObject {
     private var movieOutput: AVCaptureMovieFileOutput?
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
+    private var audioLevelOutput: AVCaptureAudioDataOutput?
+    private lazy var audioLevelProcessor = AudioLevelProcessor { [weak self] level in
+        self?.audioLevelDB = level
+    }
 
     private var segmentTimer: DispatchSourceTimer?
     private let segmentTimerQueue = DispatchQueue(label: "com.jimwas.travelvid.segmentTimer")
@@ -486,6 +608,9 @@ class RecordingManager: NSObject, ObservableObject {
         if UserDefaults.standard.object(forKey: "showRecordingIndicator") != nil {
             showRecordingIndicator = UserDefaults.standard.bool(forKey: "showRecordingIndicator")
         }
+        if UserDefaults.standard.object(forKey: "showFakePopups") != nil {
+            showFakePopups = UserDefaults.standard.bool(forKey: "showFakePopups")
+        }
         if UserDefaults.standard.object(forKey: "ledBannerUseNasalization") != nil {
             ledBannerUseNasalization = UserDefaults.standard.bool(forKey: "ledBannerUseNasalization")
         }
@@ -498,6 +623,10 @@ class RecordingManager: NSObject, ObservableObject {
         }
         if let savedConverterAmount = UserDefaults.standard.string(forKey: "converterAmount") {
             converterAmount = savedConverterAmount
+        }
+        if let savedSpeedUnit = UserDefaults.standard.string(forKey: "travelSpeedUnit"),
+           let speedUnit = TravelSpeedUnit(rawValue: savedSpeedUnit) {
+            travelSpeedUnit = speedUnit
         }
         if UserDefaults.standard.object(forKey: "stealthBrightness") != nil {
             stealthBrightness = UserDefaults.standard.bool(forKey: "stealthBrightness")
@@ -862,6 +991,8 @@ class RecordingManager: NSObject, ObservableObject {
             movieOutput = nil
             videoInput = nil
             audioInput = nil
+            audioLevelOutput = nil
+            audioLevelDB = nil
             return await prepareSession()
         }
 
@@ -1005,6 +1136,11 @@ class RecordingManager: NSObject, ObservableObject {
             session.removeInput(aInput)
             audioInput = nil
         }
+        if let levelOutput = audioLevelOutput {
+            session.removeOutput(levelOutput)
+            audioLevelOutput = nil
+        }
+        audioLevelDB = nil
 
         guard configureInputs(session: session, micEnabled: mic) else {
             session.commitConfiguration()
@@ -1018,6 +1154,10 @@ class RecordingManager: NSObject, ObservableObject {
                   let connection = output.connection(with: .video),
                   connection.isVideoStabilizationSupported {
             connection.preferredVideoStabilizationMode = .standard
+        }
+
+        if movieOutput != nil, audioLevelOutput == nil {
+            configureAudioLevelOutput(session: session)
         }
 
         session.commitConfiguration()
@@ -1076,11 +1216,34 @@ class RecordingManager: NSObject, ObservableObject {
                     connection.preferredVideoStabilizationMode = .standard
                 }
             }
+            configureAudioLevelOutput(session: session)
             return true
         } else {
             logger.error("Cannot add movie output to session")
             return false
         }
+    }
+
+    private func configureAudioLevelOutput(session: AVCaptureSession) {
+        guard audioInput != nil, recordingDisplayMode == .travelDashboard else {
+            audioLevelDB = nil
+            return
+        }
+
+        let levelOutput = AVCaptureAudioDataOutput()
+        levelOutput.setSampleBufferDelegate(
+            audioLevelProcessor,
+            queue: AudioLevelProcessor.processingQueue
+        )
+
+        guard session.canAddOutput(levelOutput) else {
+            logger.warning("Audio level metering is unavailable for this capture configuration")
+            audioLevelDB = nil
+            return
+        }
+
+        session.addOutput(levelOutput)
+        audioLevelOutput = levelOutput
     }
 
     private func bestDevice() -> AVCaptureDevice? {
@@ -1171,6 +1334,7 @@ class RecordingManager: NSObject, ObservableObject {
 
         stopSegmentTimer()
         activeSegmentStartedAt = nil
+        audioLevelDB = nil
         watchdogTimer?.invalidate()
         diskSpaceTimer?.invalidate()
         movieOutput?.stopRecording()

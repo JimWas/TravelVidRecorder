@@ -184,12 +184,9 @@ class SafeRecordingHandler: NSObject {
         endBackgroundTask()
         
         // Request extra time to finish recording if app goes to background
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask { [weak self] in
-            // Called when time expires
-            guard let self = self else { return }
-            Task { @MainActor in
-                self.handleBackgroundTimeout()
-            }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask { @MainActor [weak self] in
+            // Expiration handlers must end their task immediately to avoid termination.
+            self?.handleBackgroundTimeout()
         }
         
         // Monitor remaining time
@@ -231,12 +228,10 @@ class SafeRecordingHandler: NSObject {
     // MARK: - App Lifecycle Handlers
     @objc private func handleAppWillResignActive() {
         // App losing focus (power button, incoming call, etc.)
-        print("📱 App will resign active - continuing recording in background")
+        print("📱 App will resign active - preserving the active segment")
 
-        // Previously this stopped recording, but now we continue in background
-        // thanks to the silent audio playback keeping the app alive.
-        // Only post SafeStopRecording if we need to stop for some reason
-        // (handled by RecordingManager's interruption handlers instead)
+        // iOS may interrupt camera capture in the background. RecordingManager
+        // finalizes the current segment and resumes after the app becomes active.
     }
     
     @objc private func handleAppWillTerminate() {
@@ -251,7 +246,7 @@ class SafeRecordingHandler: NSObject {
     }
     
     @MainActor @objc private func handleAppDidEnterBackground() {
-        print("🌙 App entered background - maintaining background task")
+        print("🌙 App entered background - reserving time to finish file writes")
 
         // Ensure we have background time
         if backgroundTaskID == .invalid {

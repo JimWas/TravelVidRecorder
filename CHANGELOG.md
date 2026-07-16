@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+#### Travel Dashboard Premium Mode
+- Added a premium full-screen recording view with current time and date, live speed, compass direction and degrees, microphone level, coordinates, and a following map
+- Added a persisted MPH/KPH selector that appears in Configuration only while Travel Dashboard is selected
+- Added compass heading updates through `LocationManager`, using true heading when available and magnetic heading as a fallback
+- Added smoothed microphone `dBFS` metering from the existing `AVCaptureSession` audio input without opening a competing microphone session
+- Added graceful states for disabled audio, unavailable heading, stale speed, and missing location so telemetry never prevents recording
+- Added Travel Dashboard to the recording-mode picker, main-screen preview, and premium paywall
+
 #### Recording Reliability Center
 - Added a passive Recording Readiness card to the main screen with camera readiness/fallback, microphone status, free storage, estimated remaining recording time, configured segment length, and the most recently completed segment
 - Added `RecordingReliabilityStatus`, per-check status items, and `RecordingRecoveryState` models for clear ready, warning, unavailable, interrupted, recovering, and failed states
@@ -33,9 +41,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - Replaced local hard-coded premium coupon handling with Apple Offer Code redemption through StoreKit in the paywall and Settings
 - Successful subscription purchases, restores, product loads, and offer-code refreshes now clear stale purchase errors
+- Added a second Start Recording button directly below the selected recording-mode preview while retaining the existing button after the settings and readiness sections
 
 ### Fixed
 - Replaced the unreliable recording cover-mode context menu with a dedicated picker sheet so Cover Image, Tetris, Bitcoin Price, and other modes remain selectable after a cover image is saved
+- Kept Travel Dashboard content inside the device safe area so the clock no longer clips behind the status bar or Dynamic Island
+- Ended expiring background tasks directly in their expiration handler to avoid iOS termination warnings while finalizing recording files
+- Persisted the Fake Popups toggle so the user's enabled or disabled choice survives app relaunches
 
 ---
 

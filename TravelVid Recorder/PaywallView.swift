@@ -14,6 +14,7 @@ struct PaywallView: View {
         ("phone.fill", "Fake Call Mode"),
         ("textformat", "LED Banner Mode"),
         ("coloncurrencysign.circle.fill", "Currency Converter Mode"),
+        ("location.north.circle.fill", "Travel Dashboard Mode"),
         ("bird.fill", "Flappy Bird Mode"),
         ("bitcoinsign.circle.fill", "Bitcoin Price Mode"),
         ("plus.forwardslash.minus", "Calculator Mode"),
@@ -37,7 +38,7 @@ struct PaywallView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
-                        Text("Includes decoy tools like Fake Call, Bitcoin, LED Banner, Currency Converter, and more.")
+                        Text("Includes Travel Dashboard, Fake Call, Bitcoin, LED Banner, Currency Converter, and more.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -67,6 +68,15 @@ struct PaywallView: View {
 
                                 PremiumPreviewCard(title: "Currency Converter") {
                                     PremiumCurrencyPreview()
+                                }
+
+                                PremiumPreviewCard(title: "Travel Dashboard") {
+                                    TravelDashboardView(
+                                        speedUnit: .mph,
+                                        audioLevelDB: nil,
+                                        audioEnabled: true,
+                                        isPreview: true
+                                    )
                                 }
                             }
                             .padding(.horizontal)

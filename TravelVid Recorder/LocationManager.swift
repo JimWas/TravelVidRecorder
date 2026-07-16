@@ -7,6 +7,7 @@ class LocationManager: NSObject, ObservableObject {
     static let shared = LocationManager()
 
     @Published var currentLocation: CLLocation?
+    @Published var currentHeading: CLHeading?
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
 
     // Callback for location updates
@@ -19,6 +20,7 @@ class LocationManager: NSObject, ObservableObject {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 10 // Update every 10 meters
+        locationManager.headingFilter = 2
     }
 
     func requestPermission() {
@@ -35,6 +37,32 @@ class LocationManager: NSObject, ObservableObject {
 
     func stopTracking() {
         locationManager.stopUpdatingLocation()
+    }
+
+    func startDashboardUpdates() {
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.activityType = .otherNavigation
+        startTracking()
+        startHeadingUpdates()
+    }
+
+    func stopDashboardUpdates() {
+        stopHeadingUpdates()
+        locationManager.distanceFilter = 10
+        locationManager.activityType = .other
+    }
+
+    func startHeadingUpdates() {
+        guard CLLocationManager.headingAvailable() else {
+            currentHeading = nil
+            return
+        }
+        locationManager.startUpdatingHeading()
+    }
+
+    func stopHeadingUpdates() {
+        locationManager.stopUpdatingHeading()
+        currentHeading = nil
     }
 
     // Convert coordinates to human-readable address
@@ -98,6 +126,13 @@ extension LocationManager: CLLocationManagerDelegate {
             self.authorizationStatus = manager.authorizationStatus
             // We no longer auto-start tracking here to conserve battery and stealth.
             // Tracking is now managed explicitly by RecordingManager via startTracking/stopTracking.
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        guard newHeading.headingAccuracy >= 0 else { return }
+        Task { @MainActor in
+            self.currentHeading = newHeading
         }
     }
 

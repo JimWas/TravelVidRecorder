@@ -68,6 +68,7 @@ TravelVid Recorder/
 ├── FlappyBirdView.swift            # Flappy Bird with difficulty levels
 ├── CalculatorView.swift            # Functional calculator
 ├── BitcoinPriceView.swift          # Bitcoin price tracker
+├── TravelDashboardView.swift       # Time, speed, compass, dBFS, and map display
 ├── LoopingVideoPlayerView.swift    # Looping video player
 └── Assets.xcassets/                # App icons, images
 ```
@@ -110,6 +111,7 @@ enum RecordingDisplayMode: String, CaseIterable {
     case flappyBird = "Flappy Bird"      // PREMIUM - Playable game
     case bitcoin = "Bitcoin Price"       // PREMIUM - Price tracker
     case calculator = "Calculator"       // PREMIUM - Working calculator
+    case travelDashboard = "Travel Dashboard" // PREMIUM - Live travel telemetry
 
     var requiresPremium: Bool {
         switch self {
@@ -537,6 +539,7 @@ NotificationCenter.default.post(name: NSNotification.Name("EmergencyStopRecordin
 | LED Banner Mode | | ✓ |
 | Currency Converter Mode | | ✓ |
 | World Clock Mode | | ✓ |
+| Travel Dashboard Mode | | ✓ |
 | Ad-Free Exports | | ✓ |
 | GPS Tracking | ✓ | ✓ |
 | Video Segmentation | ✓ | ✓ |
@@ -584,6 +587,16 @@ Verify interruption recovery on a physical device:
 6. Confirm both the pre-interruption and post-recovery segments play correctly.
 
 The Simulator is suitable for compiling and UI checks, but not for validating camera capture, real phone-call interruptions, thermal pressure, or media-services resets.
+
+### Test Travel Dashboard
+1. Select Travel Dashboard and verify the premium lock appears for a free account.
+2. Select MPH or KPH in Configuration and confirm the preference survives relaunch.
+3. Start recording and verify time, speed, heading, microphone dBFS, and map location update without another confirmation step.
+4. Turn Record Audio off and confirm the noise card displays `MIC OFF` without requesting microphone access.
+5. Deny location access and confirm recording continues with unavailable speed, heading, and map states.
+6. Verify two-minute segmentation and interruption recovery while the dashboard remains visible.
+
+The noise value is relative digital full scale (`dBFS`), not calibrated environmental sound pressure (`dB SPL`).
 
 ### Test Background Recording
 1. Start recording

@@ -4,13 +4,27 @@ import StoreKit
 class SubscriptionManager: ObservableObject {
     static let shared = SubscriptionManager()
 
+    static let monthlyProductID = "com.jimwas.travelvid.premium"
+    static let lifetimeProductID = "com.jimwas.travelvid.premium.lifetime"
+
     @Published private(set) var isPremium: Bool = false
     @Published private(set) var products: [Product] = []
     @Published private(set) var isLoadingProducts: Bool = false
     @Published var purchaseError: String?
 
-    private let productID = "com.jimwas.travelvid.premium"
+    private let premiumProductIDs: Set<String> = [
+        SubscriptionManager.monthlyProductID,
+        SubscriptionManager.lifetimeProductID,
+    ]
     private var transactionListener: Task<Void, Error>?
+
+    var monthlyProduct: Product? {
+        products.first { $0.id == Self.monthlyProductID }
+    }
+
+    var lifetimeProduct: Product? {
+        products.first { $0.id == Self.lifetimeProductID }
+    }
 
     // MARK: - Developer Testing Override
 
@@ -59,6 +73,7 @@ class SubscriptionManager: ObservableObject {
     func togglePremiumForTesting() {
         #if DEBUG
         isPremium.toggle()
+        UserDefaults.standard.set(isPremium, forKey: "isPremium")
         print("🧪 Test toggle: isPremium = \(isPremium)")
         #endif
     }
@@ -73,16 +88,21 @@ class SubscriptionManager: ObservableObject {
         isLoadingProducts = true
         purchaseError = nil
         do {
-            products = try await Product.products(for: [productID])
+            let loadedProducts = try await Product.products(for: premiumProductIDs)
+            products = loadedProducts.sorted { lhs, rhs in
+                if lhs.id == Self.monthlyProductID { return true }
+                if rhs.id == Self.monthlyProductID { return false }
+                return lhs.displayName < rhs.displayName
+            }
             if products.isEmpty {
-                print("StoreKit: No products returned for ID '\(productID)'. Check App Store Connect configuration.")
-                purchaseError = "Subscription not available. Please check your connection and try again."
+                print("StoreKit: No Premium products returned for IDs \(premiumProductIDs.sorted()). Check App Store Connect configuration.")
+                purchaseError = "Premium purchase options are not available. Please check your connection and try again."
             } else {
                 purchaseError = nil
             }
         } catch {
             print("StoreKit: Failed to load products: \(error)")
-            purchaseError = "Could not load subscription. Please check your connection and try again."
+            purchaseError = "Could not load Premium purchase options. Please check your connection and try again."
         }
         isLoadingProducts = false
     }
@@ -90,19 +110,18 @@ class SubscriptionManager: ObservableObject {
     // MARK: - Introductory Offer Eligibility
 
     func isEligibleForIntroOffer() async -> Bool {
-        guard let product = products.first else { return false }
+        guard let product = monthlyProduct else { return false }
         guard let subscription = product.subscription else { return false }
         return await subscription.isEligibleForIntroOffer
     }
 
     // MARK: - Purchase
 
-    func purchase() async {
-        guard let product = products.first else {
-            purchaseError = "Subscription not available. Please try again later."
-            // Retry loading products in case they weren't loaded yet
-            await loadProducts()
-            return
+    @discardableResult
+    func purchase(_ product: Product) async -> Bool {
+        guard premiumProductIDs.contains(product.id) else {
+            purchaseError = "This Premium purchase option is not recognized."
+            return false
         }
 
         do {
@@ -114,19 +133,22 @@ class SubscriptionManager: ObservableObject {
                 await transaction.finish()
                 await updateSubscriptionStatus()
                 purchaseError = nil
+                return true
 
             case .userCancelled:
                 purchaseError = nil
-                break
+                return false
 
             case .pending:
                 purchaseError = "Purchase is pending approval."
+                return false
 
             @unknown default:
-                break
+                return false
             }
         } catch {
             purchaseError = "Purchase failed: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -155,18 +177,18 @@ class SubscriptionManager: ObservableObject {
     // MARK: - Subscription Status
 
     func updateSubscriptionStatus() async {
-        var hasActiveSubscription = false
+        var hasPremiumEntitlement = false
 
         for await result in Transaction.currentEntitlements {
             if let transaction = try? checkVerified(result),
-               transaction.productID == productID,
+               premiumProductIDs.contains(transaction.productID),
                transaction.revocationDate == nil {
-                hasActiveSubscription = true
+                hasPremiumEntitlement = true
                 break
             }
         }
 
-        isPremium = hasActiveSubscription
+        isPremium = hasPremiumEntitlement
         UserDefaults.standard.set(isPremium, forKey: "isPremium")
     }
 

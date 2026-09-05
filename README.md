@@ -28,7 +28,7 @@ Keep recording while your screen shows something completely unrelated.
 ### Recording
 - **Resolutions**: 720p, 1080p, 4K
 - **Cameras**: Front, Back (Wide + Ultra-Wide)
-- **Auto-segmentation**: splits recordings into configurable chunks (1–10 min) so no data is lost on interruption
+- **Auto-segmentation**: splits recordings into configurable chunks (default 1:57, adjustable from 1–10 min) so less footage is at risk during an interruption
 - **Recording Readiness**: passively checks camera, microphone, storage, segment length, and the most recently saved segment before recording
 - **Stabilization**: optional video stabilization
 - **Audio toggle**: record with or without audio
@@ -58,23 +58,27 @@ Discreetly stop recording without it being obvious.
 - Location data embedded in exported videos
 
 ### Library
-- Thumbnail grid of all recordings
+- Session-grouped library with expandable safety segments
 - Tap to preview with full playback controls
 - Tap map thumbnail to open full GPS path view
 - Multi-select for batch export or delete
 - Export progress bar with live X-of-Y counter
+- Export every completed recording as a session-organized ZIP through AirDrop or Save to Files
+- Export a session as its original safety clips or combine it into one video
+- Optional 1.5-second “TravelVid Recorder” end card for Photos exports; only the end card is encoded and the recorded video/audio remain unchanged
 
 ### Premium
 - Unlock all decoy modes
 - Ad-free video exports
 - **$3.99/month** with a **2-week free trial**
+- **$99 one-time** Premium Lifetime option
 - Apple Offer Code redemption in the paywall and Settings
 
 ---
 
 ## Requirements
 
-- iOS 15.0+
+- iOS 17.6+
 - Physical device required (camera does not work in Simulator)
 - Permissions: Camera, Microphone, Photos Library
 - Location permission optional (for GPS tagging)
@@ -108,6 +112,7 @@ Then in Xcode:
 | Package | Purpose |
 |---------|---------|
 | Google-Mobile-Ads-SDK | AdMob interstitial & rewarded ads |
+| ZIPFoundation | Large ZIP creation for AirDrop and Files exports |
 
 ### Frameworks Used
 
@@ -128,6 +133,9 @@ TravelVid Recorder/
 ├── MainView.swift                   # Main screen — settings, library, controls
 ├── RecordingView.swift              # Full-screen recording + decoy UI
 ├── RecordingManager.swift           # Core recording logic (AVFoundation)
+├── RecordingArchiveExporter.swift   # ZIP backup, metadata, and GPS route export
+├── RecordingSessionExporter.swift   # Lossless session combination when formats match
+├── VideoWatermarkExporter.swift     # Low-processing branded end-card creation
 ├── SafeRecordingHandler.swift       # File safety, background tasks, disk checks
 ├── LocationManager.swift            # GPS tracking + reverse geocoding
 ├── SubscriptionManager.swift        # StoreKit v2 subscriptions + Apple Offer Codes
@@ -138,6 +146,8 @@ TravelVid Recorder/
 ├── TetrisGame.swift                 # Playable Tetris
 ├── FlappyBirdView.swift             # Playable Flappy Bird
 ├── CalculatorView.swift             # Functional calculator
+├── CurrencyConverterView.swift      # USD/VND and USD/KHR conversion modes
+├── LEDBannerView.swift               # Scrolling configurable banner
 ├── BitcoinPriceView.swift           # Bitcoin price tracker
 ├── WorldClockView.swift             # Live world clock (44 cities)
 ├── TravelDashboardView.swift        # Live time, speed, compass, noise, and map dashboard

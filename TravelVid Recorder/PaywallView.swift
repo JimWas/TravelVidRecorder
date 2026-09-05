@@ -8,6 +8,7 @@ struct PaywallView: View {
     @State private var showError = false
     @State private var isEligibleForTrial = false
     @State private var isShowingOfferCodeRedemption = false
+    @State private var selectedProductID = SubscriptionManager.monthlyProductID
 
     private let features: [(icon: String, title: String)] = [
         ("play.rectangle.fill", "Video Playback Mode"),
@@ -104,45 +105,52 @@ struct PaywallView: View {
                     .cornerRadius(16)
                     .padding(.horizontal)
 
-                    // Price & Trial Info
+                    // Purchase options
                     if subscriptionManager.isLoadingProducts {
-                        ProgressView("Loading subscription...")
+                        ProgressView("Loading purchase options...")
                             .padding()
-                    } else if let product = subscriptionManager.products.first {
-                        VStack(spacing: 8) {
-                            // Price is always prominently displayed first
-                            Text("\(product.displayPrice) / month")
-                                .font(.title2.bold())
-
-                            if isEligibleForTrial {
-                                Text("Includes 2-week free trial")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-
-                                Text("You won't be charged until the trial ends. After the 2-week free trial, you will be automatically charged \(product.displayPrice) per month until you cancel.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal)
+                    } else if !subscriptionManager.products.isEmpty {
+                        VStack(spacing: 12) {
+                            if let monthlyProduct = subscriptionManager.monthlyProduct {
+                                purchaseOptionCard(
+                                    product: monthlyProduct,
+                                    title: "Monthly",
+                                    detail: isEligibleForTrial
+                                        ? "2 weeks free, then \(monthlyProduct.displayPrice) per month"
+                                        : "\(monthlyProduct.displayPrice) per month, cancel anytime",
+                                    badge: isEligibleForTrial ? "FREE TRIAL" : nil
+                                )
                             }
 
-                            Text("Auto-renewable subscription. Cancel anytime in Settings.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
+                            if let lifetimeProduct = subscriptionManager.lifetimeProduct {
+                                purchaseOptionCard(
+                                    product: lifetimeProduct,
+                                    title: "Lifetime",
+                                    detail: "One-time purchase. No subscription.",
+                                    badge: "BEST VALUE"
+                                )
+                            }
 
                             Text("Premium also removes interstitial ads before exports and preview opens.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
+
+                            if selectedProductID == SubscriptionManager.lifetimeProductID {
+                                Text("Already subscribed monthly? Buying Lifetime does not automatically cancel your subscription. Cancel monthly billing in Apple Account Settings after your Lifetime purchase is complete.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal)
+                            }
                         }
                     } else {
                         VStack(spacing: 8) {
-                            Text("Unable to load subscription")
+                            Text("Unable to load purchase options")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                             Button("Tap to Retry") {
-                                Task { await subscriptionManager.loadProducts() }
+                                Task { await loadProductsAndSelectDefault() }
                             }
                             .font(.subheadline.bold())
                         }
@@ -153,20 +161,18 @@ struct PaywallView: View {
                     Button {
                         isPurchasing = true
                         Task {
-                            if subscriptionManager.products.isEmpty {
-                                await subscriptionManager.loadProducts()
-                            }
+                            await loadProductsAndSelectDefault()
 
-                            if subscriptionManager.products.isEmpty {
-                                subscriptionManager.purchaseError = "Subscription not available. Please try again."
+                            guard let product = selectedProduct else {
+                                subscriptionManager.purchaseError = "The selected Premium option is not available. Please try again."
                                 showError = true
                                 isPurchasing = false
                                 return
                             }
 
-                            await subscriptionManager.purchase()
+                            let purchaseSucceeded = await subscriptionManager.purchase(product)
                             isPurchasing = false
-                            if subscriptionManager.isPremium {
+                            if purchaseSucceeded {
                                 dismiss()
                             }
                             if subscriptionManager.purchaseError != nil {
@@ -179,17 +185,17 @@ struct PaywallView: View {
                                 ProgressView()
                                     .tint(.white)
                             } else {
-                                Text("Subscribe Now")
+                                Text(purchaseButtonTitle)
                                     .font(.headline)
                             }
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: 50)
-                        .background((subscriptionManager.products.isEmpty || isPurchasing) ? Color.gray : Color.blue)
+                        .background((selectedProduct == nil || isPurchasing) ? Color.gray : Color.blue)
                         .foregroundStyle(.white)
                         .cornerRadius(14)
                     }
-                    .disabled(isPurchasing)
+                    .disabled(selectedProduct == nil || isPurchasing)
                     .padding(.horizontal)
 
                     Button("Redeem Offer Code") {
@@ -211,9 +217,10 @@ struct PaywallView: View {
 
                     // Legal links (required for auto-renewable subscriptions)
                     VStack(spacing: 8) {
-                        Text("TravelVid Premium Monthly Subscription")
+                        Text("Monthly renews automatically until canceled. Lifetime is a one-time purchase.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
 
                         HStack(spacing: 16) {
                             Link("Terms of Use", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
@@ -255,12 +262,98 @@ struct PaywallView: View {
                 }
             }
             .task {
-                if subscriptionManager.products.isEmpty {
-                    await subscriptionManager.loadProducts()
-                }
+                await loadProductsAndSelectDefault()
                 isEligibleForTrial = await subscriptionManager.isEligibleForIntroOffer()
             }
         }
+    }
+
+    private var selectedProduct: Product? {
+        subscriptionManager.products.first { $0.id == selectedProductID }
+    }
+
+    private var purchaseButtonTitle: String {
+        guard let selectedProduct else { return "Choose a Premium Option" }
+
+        if selectedProduct.id == SubscriptionManager.lifetimeProductID {
+            return "Unlock Lifetime — \(selectedProduct.displayPrice)"
+        }
+
+        if isEligibleForTrial {
+            return "Start Free Trial"
+        }
+
+        return "Subscribe — \(selectedProduct.displayPrice) / month"
+    }
+
+    @MainActor
+    private func loadProductsAndSelectDefault() async {
+        if subscriptionManager.products.isEmpty {
+            await subscriptionManager.loadProducts()
+        }
+
+        if selectedProduct == nil {
+            selectedProductID = subscriptionManager.monthlyProduct?.id
+                ?? subscriptionManager.lifetimeProduct?.id
+                ?? SubscriptionManager.monthlyProductID
+        }
+    }
+
+    private func purchaseOptionCard(
+        product: Product,
+        title: String,
+        detail: String,
+        badge: String?
+    ) -> some View {
+        let isSelected = selectedProductID == product.id
+
+        return Button {
+            selectedProductID = product.id
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(isSelected ? Color.blue : Color.secondary)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+
+                        if let badge {
+                            Text(badge)
+                                .font(.caption2.bold())
+                                .foregroundStyle(title == "Lifetime" ? Color.white : Color.blue)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(title == "Lifetime" ? Color.blue : Color.blue.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Text(product.displayPrice)
+                    .font(.title3.bold())
+                    .foregroundStyle(.primary)
+            }
+            .padding()
+            .background(isSelected ? Color.blue.opacity(0.10) : Color(uiColor: .secondarySystemBackground))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal)
     }
 }
 

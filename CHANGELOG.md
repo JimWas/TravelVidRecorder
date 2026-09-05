@@ -5,9 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [3.7.0] - 2026-09-05
 
 ### Added
+
+#### Optional End-Card Watermark
+- Added a persistent End-Card Watermark toggle in Advanced Settings
+- Added a 1.5-second “TravelVid Recorder” card with white text rendered in the bundled Nasalization font
+- The original encoded video and audio are copied unchanged, while only the short end card is newly encoded
+- End cards are appended to separate, combined-session, and trimmed videos saved to Photos while original recordings remain untouched
+
+#### Premium Lifetime Unlock
+- Added a $99 one-time Premium Lifetime purchase alongside the existing monthly subscription
+- Added a clear monthly-versus-lifetime selector using StoreKit-localized prices
+- Lifetime purchases unlock the same Premium features, remain restorable, and are verified through StoreKit entitlements
+
+#### Recording Sessions and Combined Export
+- Grouped safety segments into a single library card with aggregate duration, file size, and an expandable clip list
+- Added session-level export options for saving the original clips separately or combining them into one video
+- Added a shared session GPS route while preserving the original segmented recordings and their reliability benefits
+
+#### ZIP Backup, AirDrop, and Files Export
+- Added an AirDrop or Save ZIP action that packages every completed recording into one portable archive
+- Organized ZIP contents by recording session with original safety segments, session metadata, a root manifest, and GeoJSON routes
+- Added free-space validation, live creation progress, cancellation, large-archive ZIP64 support, and automatic temporary-file cleanup
+- The system share sheet supports AirDrop to a MacBook and Save to Files on the iPhone without first exporting to Photos
 
 #### Travel Dashboard Premium Mode
 - Added a premium full-screen recording view with current time and date, live speed, compass direction and degrees, microphone level, coordinates, and a following map
@@ -39,11 +61,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Updated the bundled SKAdNetwork list and added BidMachine identifier `wg4vff78zm.skadnetwork`
 
 ### Changed
+- Changed the recording segment default to 1:57 so the optional 1.5-second end card normally keeps completed clips below two minutes, including a one-time migration from the previous 2:00 default
 - Replaced local hard-coded premium coupon handling with Apple Offer Code redemption through StoreKit in the paywall and Settings
 - Successful subscription purchases, restores, product loads, and offer-code refreshes now clear stale purchase errors
 - Added a second Start Recording button directly below the selected recording-mode preview while retaining the existing button after the settings and readiness sections
 
 ### Fixed
+- Prevented the post-export delete prompt from becoming unresponsive by separating alert presentation from the export overlay transition and batching library deletion
+- Replaced the unavailable `trim` symbol with the supported scissors icon
+- Constrained the currency-converter preview so its invisible background no longer blocks the recording-mode menu
+- Replaced the recording-mode sheet with a native menu that remains available when a saved cover image is displayed
+- Prevented a physical-device launch crash caused by excessive SwiftUI type recursion in the recording-mode preview
+- Added reliable, visible keyboard dismissal to both currency-converter screens
+- Fixed the recording-mode picker becoming unresponsive while the currency-converter keypad had focus
+- Persisted the complete recording configuration across app launches, including resolution, segment length, camera and lens, audio, stabilization, stop gesture, and hold duration
 - Replaced the unreliable recording cover-mode context menu with a dedicated picker sheet so Cover Image, Tetris, Bitcoin Price, and other modes remain selectable after a cover image is saved
 - Kept Travel Dashboard content inside the device safe area so the clock no longer clips behind the status bar or Dynamic Island
 - Ended expiring background tasks directly in their expiration handler to avoid iOS termination warnings while finalizing recording files
@@ -305,5 +336,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - All managers use `@MainActor` — never call `@Published` setters from a background thread without `await MainActor.run {}`
 - `PBXFileSystemSynchronizedRootGroup` is used in the Xcode project — new `.swift` files added to the `TravelVid Recorder/` folder are picked up automatically, no need to edit `project.pbxproj`
 - The DEBUG premium override is disabled by default in `SubscriptionManager.swift`; temporarily enable `developerOverrideEnabled` only for local premium-feature testing
-- AdMob initializes lazily on the first ad request — do not call `initializeAdMob()` at app launch
+- AdMob initializes during main-screen startup; all ad entry points must still tolerate initialization being in progress
 - SourceKit reports false "Cannot find X in scope" errors on this project due to cross-file symbol resolution; always verify with `xcodebuild` before concluding there is a real compiler error

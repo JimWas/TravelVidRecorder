@@ -1,11 +1,15 @@
 import SwiftUI
+import UIKit
 
 struct CurrencyConverterView: View {
     @Binding var amountText: String
     @Binding var base: CurrencyConverterBase
     let isPreview: Bool
 
+    @FocusState private var amountFieldIsFocused: Bool
+
     private let usdToVndRate: Double = 25_400
+    private let usdToKhrRate: Double = 4_100
 
     var body: some View {
         ZStack {
@@ -18,7 +22,14 @@ struct CurrencyConverterView: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-            .ignoresSafeArea()
+            // Only the full-screen recording decoy should extend beyond its bounds.
+            // Extending the home-screen preview into the safe area creates an invisible
+            // hit-testing layer that can cover the recording-mode selector above it.
+            .ignoresSafeArea(edges: isPreview ? [] : .all)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                dismissKeyboard()
+            }
 
             VStack(spacing: isPreview ? 14 : 18) {
                 header
@@ -28,6 +39,15 @@ struct CurrencyConverterView: View {
                 Spacer(minLength: isPreview ? 0 : 24)
             }
             .padding(isPreview ? 16 : 20)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    dismissKeyboard()
+                }
+                .fontWeight(.semibold)
+            }
         }
     }
 
@@ -45,14 +65,32 @@ struct CurrencyConverterView: View {
             Spacer()
 
             if !isPreview {
-                Button {
-                    swapDirection()
-                } label: {
-                    Image(systemName: "arrow.left.arrow.right.circle.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(Color(red: 0.36, green: 0.92, blue: 0.65))
+                HStack(spacing: 12) {
+                    if amountFieldIsFocused {
+                        Button {
+                            dismissKeyboard()
+                        } label: {
+                            Label("Done", systemImage: "keyboard.chevron.compact.down")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.white.opacity(0.14))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Close keyboard")
+                    }
+
+                    Button {
+                        swapDirection()
+                    } label: {
+                        Image(systemName: "arrow.left.arrow.right.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundColor(Color(red: 0.36, green: 0.92, blue: 0.65))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -77,6 +115,7 @@ struct CurrencyConverterView: View {
                 } else {
                     TextField("Amount", text: $amountText)
                         .keyboardType(.decimalPad)
+                        .focused($amountFieldIsFocused)
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                 }
@@ -114,6 +153,9 @@ struct CurrencyConverterView: View {
         }
         .padding(isPreview ? 16 : 18)
         .background(cardBackground)
+        .onTapGesture {
+            dismissKeyboard()
+        }
     }
 
     private var rateCard: some View {
@@ -142,6 +184,9 @@ struct CurrencyConverterView: View {
         }
         .padding(isPreview ? 14 : 16)
         .background(cardBackground)
+        .onTapGesture {
+            dismissKeyboard()
+        }
     }
 
     private func currencyBadge(_ text: String) -> some View {
@@ -176,6 +221,10 @@ struct CurrencyConverterView: View {
             return CurrencyPresentation(code: "USD", symbol: "$")
         case .vndToUsd:
             return CurrencyPresentation(code: "VND", symbol: "d")
+        case .usdToKhr:
+            return CurrencyPresentation(code: "USD", symbol: "$")
+        case .khrToUsd:
+            return CurrencyPresentation(code: "KHR", symbol: "៛")
         }
     }
 
@@ -184,6 +233,10 @@ struct CurrencyConverterView: View {
         case .usdToVnd:
             return CurrencyPresentation(code: "VND", symbol: "d")
         case .vndToUsd:
+            return CurrencyPresentation(code: "USD", symbol: "$")
+        case .usdToKhr:
+            return CurrencyPresentation(code: "KHR", symbol: "៛")
+        case .khrToUsd:
             return CurrencyPresentation(code: "USD", symbol: "$")
         }
     }
@@ -195,6 +248,11 @@ struct CurrencyConverterView: View {
         case .vndToUsd:
             guard usdToVndRate != 0 else { return 0 }
             return parsedAmount / usdToVndRate
+        case .usdToKhr:
+            return parsedAmount * usdToKhrRate
+        case .khrToUsd:
+            guard usdToKhrRate != 0 else { return 0 }
+            return parsedAmount / usdToKhrRate
         }
     }
 
@@ -212,6 +270,10 @@ struct CurrencyConverterView: View {
             return "1 USD = \(format(value: usdToVndRate, currency: "VND"))"
         case .vndToUsd:
             return "1 VND = \(format(value: 1 / usdToVndRate, currency: "USD"))"
+        case .usdToKhr:
+            return "1 USD ≈ \(format(value: usdToKhrRate, currency: "KHR")) KHR"
+        case .khrToUsd:
+            return "\(format(value: usdToKhrRate, currency: "KHR")) KHR ≈ 1 USD"
         }
     }
 
@@ -224,7 +286,27 @@ struct CurrencyConverterView: View {
     }
 
     private func swapDirection() {
-        base = base == .usdToVnd ? .vndToUsd : .usdToVnd
+        dismissKeyboard()
+        switch base {
+        case .usdToVnd:
+            base = .vndToUsd
+        case .vndToUsd:
+            base = .usdToVnd
+        case .usdToKhr:
+            base = .khrToUsd
+        case .khrToUsd:
+            base = .usdToKhr
+        }
+    }
+
+    private func dismissKeyboard() {
+        amountFieldIsFocused = false
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
     }
 }
 

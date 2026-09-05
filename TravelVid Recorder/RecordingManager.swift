@@ -84,6 +84,8 @@ enum TravelSpeedUnit: String, CaseIterable, Identifiable {
 enum CurrencyConverterBase: String, CaseIterable, Identifiable {
     case usdToVnd = "USD to VND"
     case vndToUsd = "VND to USD"
+    case usdToKhr = "USD to Cambodian Riel"
+    case khrToUsd = "Cambodian Riel to USD"
 
     var id: String { rawValue }
 }
@@ -120,15 +122,17 @@ enum StopRecordingGesture: String, CaseIterable, Identifiable {
 }
 
 // MARK: - Location Data
-struct LocationPoint: Codable {
+struct LocationPoint: Codable, Sendable {
     let latitude: Double
     let longitude: Double
     let timestamp: Date
 }
 
 // MARK: - Recording Model
-struct Recording: Identifiable {
+struct Recording: Identifiable, Sendable {
     let id = UUID()
+    let sessionID: String
+    let segmentIndex: Int
     let name: String
     let duration: TimeInterval
     let size: Int64
@@ -138,6 +142,31 @@ struct Recording: Identifiable {
     let longitude: Double?
     let address: String?
     let locationPath: [LocationPoint]?
+}
+
+// MARK: - Recording Session Model
+struct RecordingSession: Identifiable, Sendable {
+    let id: String
+    let segments: [Recording]
+
+    var startDate: Date? { segments.compactMap(\.creation).min() }
+    var totalDuration: TimeInterval { segments.reduce(0) { $0 + $1.duration } }
+    var totalSize: Int64 { segments.reduce(0) { $0 + $1.size } }
+    var address: String? { segments.compactMap(\.address).first }
+    var latitude: Double? { segments.compactMap(\.latitude).first }
+    var longitude: Double? { segments.compactMap(\.longitude).first }
+
+    /// Segment metadata currently contains the route collected so far. The longest path is
+    /// therefore the complete shared session route without duplicating earlier points.
+    var sharedLocationPath: [LocationPoint]? {
+        segments.compactMap(\.locationPath).max { $0.count < $1.count }
+    }
+
+    var mapRecording: Recording? {
+        segments.max {
+            ($0.locationPath?.count ?? 0) < ($1.locationPath?.count ?? 0)
+        } ?? segments.first
+    }
 }
 
 // MARK: - Recording History Entry
@@ -169,6 +198,15 @@ struct RecordingMetadata: Codable {
     let longitude: Double?
     let address: String?
     let locationPath: [LocationPoint]?
+    let sessionID: String?
+    let segmentIndex: Int?
+    let sessionStartDate: Date?
+}
+
+private struct SegmentSessionContext {
+    let sessionID: String
+    let segmentIndex: Int
+    let sessionStartDate: Date
 }
 
 // MARK: - Recording Reliability
@@ -320,10 +358,18 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var availableStorageBytes: Int64 = 0
     @Published var totalStorageBytes: Int64 = 0
     @Published var recordingHistory: [RecordingHistoryEntry] = []
-    @Published var segmentLength: TimeInterval = 120
-    @Published var selectedResolution: Resolution = .p1080
-    @Published var audioOn = true
-    @Published var enableStabilization = false
+    @Published var segmentLength: TimeInterval = 117 {
+        didSet { UserDefaults.standard.set(segmentLength, forKey: "segmentLength") }
+    }
+    @Published var selectedResolution: Resolution = .p1080 {
+        didSet { UserDefaults.standard.set(selectedResolution.rawValue, forKey: "selectedResolution") }
+    }
+    @Published var audioOn = true {
+        didSet { UserDefaults.standard.set(audioOn, forKey: "audioOn") }
+    }
+    @Published var enableStabilization = false {
+        didSet { UserDefaults.standard.set(enableStabilization, forKey: "enableStabilization") }
+    }
     @Published private(set) var reliabilityStatus: RecordingReliabilityStatus = .checking
     @Published private(set) var recoveryState: RecordingRecoveryState = .idle
 
@@ -333,16 +379,33 @@ class RecordingManager: NSObject, ObservableObject {
             UserDefaults.standard.set(showFakePopups, forKey: "showFakePopups")
         }
     }
-    @Published var recordingDisplayMode: RecordingDisplayMode = .coverImage
-    @Published var stopGesture: StopRecordingGesture = .fiveTaps
-    @Published var holdDuration: Int = 2 // 1-10 seconds for tap & hold gesture
+    @Published var recordingDisplayMode: RecordingDisplayMode = .coverImage {
+        didSet {
+            UserDefaults.standard.set(recordingDisplayMode.rawValue, forKey: "recordingDisplayMode")
+        }
+    }
+    @Published var stopGesture: StopRecordingGesture = .fiveTaps {
+        didSet { UserDefaults.standard.set(stopGesture.rawValue, forKey: "stopGesture") }
+    }
+    @Published var holdDuration: Int = 2 { // 1-10 seconds for tap & hold gesture
+        didSet { UserDefaults.standard.set(holdDuration, forKey: "holdDuration") }
+    }
 
-    @Published var cameraPosition: AVCaptureDevice.Position = .back
-    @Published var cameraType: CameraType = .ultraWide
+    @Published var cameraPosition: AVCaptureDevice.Position = .back {
+        didSet { UserDefaults.standard.set(cameraPosition.rawValue, forKey: "cameraPosition") }
+    }
+    @Published var cameraType: CameraType = .ultraWide {
+        didSet { UserDefaults.standard.set(cameraType.rawValue, forKey: "cameraType") }
+    }
     @Published var selectedVideoURL: URL?
     @Published var showRecordingIndicator: Bool = true {
         didSet {
             UserDefaults.standard.set(showRecordingIndicator, forKey: "showRecordingIndicator")
+        }
+    }
+    @Published var videoWatermarkEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(videoWatermarkEnabled, forKey: "videoWatermarkEnabled")
         }
     }
     @Published var fakeCallContactName: String = "Customer Service" {
@@ -411,6 +474,9 @@ class RecordingManager: NSObject, ObservableObject {
 
     private var sessionStartDate: Date?
     private var sessionSegmentCount: Int = 0
+    private var activeSessionID: String?
+    private var nextSessionSegmentIndex = 1
+    private var segmentSessionContexts: [String: SegmentSessionContext] = [:]
 
     // Reliability monitoring
     private var watchdogTimer: Timer?
@@ -437,6 +503,22 @@ class RecordingManager: NSObject, ObservableObject {
         refreshStorageInfo()
         recordingHistory = loadHistory()
         refreshReliabilityStatus()
+    }
+
+    var recordingSessions: [RecordingSession] {
+        Dictionary(grouping: recordings, by: \.sessionID)
+            .map { sessionID, segments in
+                RecordingSession(
+                    id: sessionID,
+                    segments: segments.sorted {
+                        if $0.segmentIndex == $1.segmentIndex {
+                            return ($0.creation ?? .distantPast) < ($1.creation ?? .distantPast)
+                        }
+                        return $0.segmentIndex < $1.segmentIndex
+                    }
+                )
+            }
+            .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
     }
 
     func refreshStorageInfo() {
@@ -599,6 +681,48 @@ class RecordingManager: NSObject, ObservableObject {
     }
 
     private func loadPersistedSettings() {
+        let segmentDefaultMigrationKey = "didMigrateDefaultSegmentLengthTo117"
+        if UserDefaults.standard.object(forKey: "segmentLength") != nil {
+            let savedSegmentLength = UserDefaults.standard.double(forKey: "segmentLength")
+            if !UserDefaults.standard.bool(forKey: segmentDefaultMigrationKey),
+               abs(savedSegmentLength - 120) < 0.5 {
+                segmentLength = 117
+            } else {
+                segmentLength = min(600, max(60, savedSegmentLength))
+            }
+        }
+        UserDefaults.standard.set(true, forKey: segmentDefaultMigrationKey)
+        if let savedResolution = UserDefaults.standard.string(forKey: "selectedResolution"),
+           let resolution = Resolution(rawValue: savedResolution) {
+            selectedResolution = resolution
+        }
+        if UserDefaults.standard.object(forKey: "audioOn") != nil {
+            audioOn = UserDefaults.standard.bool(forKey: "audioOn")
+        }
+        if UserDefaults.standard.object(forKey: "enableStabilization") != nil {
+            enableStabilization = UserDefaults.standard.bool(forKey: "enableStabilization")
+        }
+        if let savedStopGesture = UserDefaults.standard.string(forKey: "stopGesture"),
+           let gesture = StopRecordingGesture(rawValue: savedStopGesture) {
+            stopGesture = gesture
+        }
+        if UserDefaults.standard.object(forKey: "holdDuration") != nil {
+            holdDuration = min(10, max(1, UserDefaults.standard.integer(forKey: "holdDuration")))
+        }
+        if UserDefaults.standard.object(forKey: "cameraPosition") != nil {
+            if let savedPosition = AVCaptureDevice.Position(rawValue: UserDefaults.standard.integer(forKey: "cameraPosition")),
+               savedPosition == .front || savedPosition == .back {
+                cameraPosition = savedPosition
+            }
+        }
+        if let savedCameraType = UserDefaults.standard.string(forKey: "cameraType"),
+           let type = CameraType(rawValue: savedCameraType) {
+            cameraType = type
+        }
+        if let savedDisplayMode = UserDefaults.standard.string(forKey: "recordingDisplayMode"),
+           let displayMode = RecordingDisplayMode(rawValue: savedDisplayMode) {
+            recordingDisplayMode = displayMode
+        }
         if let savedContactName = UserDefaults.standard.string(forKey: "fakeCallContactName") {
             fakeCallContactName = savedContactName
         }
@@ -607,6 +731,9 @@ class RecordingManager: NSObject, ObservableObject {
         }
         if UserDefaults.standard.object(forKey: "showRecordingIndicator") != nil {
             showRecordingIndicator = UserDefaults.standard.bool(forKey: "showRecordingIndicator")
+        }
+        if UserDefaults.standard.object(forKey: "videoWatermarkEnabled") != nil {
+            videoWatermarkEnabled = UserDefaults.standard.bool(forKey: "videoWatermarkEnabled")
         }
         if UserDefaults.standard.object(forKey: "showFakePopups") != nil {
             showFakePopups = UserDefaults.standard.bool(forKey: "showFakePopups")
@@ -1277,6 +1404,8 @@ class RecordingManager: NSObject, ObservableObject {
         isSegmenting = false
         sessionStartDate = Date()
         sessionSegmentCount = 0
+        activeSessionID = UUID().uuidString
+        nextSessionSegmentIndex = 1
         let url = nextURL()
         activeSegmentURL = url
         activeSegmentStartedAt = Date()
@@ -1349,7 +1478,7 @@ class RecordingManager: NSObject, ObservableObject {
             let entry = RecordingHistoryEntry(
                 startDate: start,
                 duration: elapsed,
-                segmentCount: max(1, sessionSegmentCount),
+                segmentCount: max(1, nextSessionSegmentIndex - 1),
                 totalBytes: 0,
                 address: recordingLocation.flatMap { _ in nil },
                 latitude: recordingLocation?.coordinate.latitude,
@@ -1383,7 +1512,6 @@ class RecordingManager: NSObject, ObservableObject {
     private func rotateSegment() {
         guard isRecording, !isSegmenting else { return }
         isSegmenting = true
-        sessionSegmentCount += 1
         stopSegmentTimer()
         movieOutput?.stopRecording()
     }
@@ -1496,10 +1624,39 @@ class RecordingManager: NSObject, ObservableObject {
     // MARK: - File Helpers
     private func nextURL() -> URL {
         let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd-HH-mm-ss"
+        df.dateFormat = "yyyyMMdd-HHmmss"
         let stamp = df.string(from: Date())
-        let random = String(UUID().uuidString.prefix(6))
-        return directory().appendingPathComponent("\(stamp)-\(random).mov")
+        let sessionID = activeSessionID ?? UUID().uuidString
+        let sessionStart = sessionStartDate ?? Date()
+        let segmentIndex = nextSessionSegmentIndex
+        nextSessionSegmentIndex += 1
+        let filename = "TV_\(sessionID)_\(String(format: "%04d", segmentIndex))_\(stamp).mov"
+        segmentSessionContexts[filename] = SegmentSessionContext(
+            sessionID: sessionID,
+            segmentIndex: segmentIndex,
+            sessionStartDate: sessionStart
+        )
+        return directory().appendingPathComponent(filename)
+    }
+
+    private func sessionContext(for url: URL) -> SegmentSessionContext? {
+        let filename = url.lastPathComponent
+        if let context = segmentSessionContexts[filename] {
+            return context
+        }
+
+        let parts = url.deletingPathExtension().lastPathComponent.split(separator: "_")
+        guard parts.count >= 4,
+              parts[0] == "TV",
+              let segmentIndex = Int(parts[2]) else {
+            return nil
+        }
+
+        return SegmentSessionContext(
+            sessionID: String(parts[1]),
+            segmentIndex: segmentIndex,
+            sessionStartDate: Date()
+        )
     }
 
     private func directory() -> URL {
@@ -1552,9 +1709,24 @@ class RecordingManager: NSObject, ObservableObject {
         try? data.write(to: metadataURL())
     }
 
-    private func saveRecordingMetadata(filename: String, latitude: Double?, longitude: Double?, address: String?, locationPath: [LocationPoint]?) {
+    private func saveRecordingMetadata(
+        filename: String,
+        latitude: Double?,
+        longitude: Double?,
+        address: String?,
+        locationPath: [LocationPoint]?,
+        sessionContext: SegmentSessionContext
+    ) {
         var metadata = loadMetadata()
-        metadata[filename] = RecordingMetadata(latitude: latitude, longitude: longitude, address: address, locationPath: locationPath)
+        metadata[filename] = RecordingMetadata(
+            latitude: latitude,
+            longitude: longitude,
+            address: address,
+            locationPath: locationPath,
+            sessionID: sessionContext.sessionID,
+            segmentIndex: sessionContext.segmentIndex,
+            sessionStartDate: sessionContext.sessionStartDate
+        )
         saveMetadata(metadata)
     }
 
@@ -1638,9 +1810,21 @@ class RecordingManager: NSObject, ObservableObject {
         }
 
         var list: [Recording] = []
-        let metadataByFilename = loadMetadata()
+        var metadataByFilename = loadMetadata()
+        var didMigrateMetadata = false
+        var currentLegacySessionID: String?
+        var currentLegacySegmentIndex = 0
+        var previousLegacySegmentEnd: Date?
 
-        for url in files where url.pathExtension.lowercased() == "mov" {
+        let videoFiles = files
+            .filter { $0.pathExtension.lowercased() == "mov" }
+            .sorted {
+                let left = (try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                let right = (try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                return left < right
+            }
+
+        for url in videoFiles {
             let attr = try? fm.attributesOfItem(atPath: url.path)
             let size = attr?[.size] as? Int64 ?? 0
             let creation = attr?[.creationDate] as? Date
@@ -1660,9 +1844,56 @@ class RecordingManager: NSObject, ObservableObject {
             }
 
             // Load GPS metadata if available
-            let metadata = metadataByFilename[url.lastPathComponent]
+            var metadata = metadataByFilename[url.lastPathComponent]
+            let parsedContext = sessionContext(for: url)
+            let sessionID: String
+            let segmentIndex: Int
 
-            list.append(Recording(name: url.lastPathComponent,
+            if let persistedSessionID = metadata?.sessionID,
+               let persistedSegmentIndex = metadata?.segmentIndex {
+                sessionID = persistedSessionID
+                segmentIndex = persistedSegmentIndex
+                currentLegacySessionID = nil
+                previousLegacySegmentEnd = nil
+            } else if let parsedContext {
+                sessionID = parsedContext.sessionID
+                segmentIndex = parsedContext.segmentIndex
+                currentLegacySessionID = nil
+                previousLegacySegmentEnd = nil
+            } else {
+                let segmentStart = creation ?? .distantPast
+                let gap = previousLegacySegmentEnd.map { segmentStart.timeIntervalSince($0) }
+                let continuesPreviousSession = gap.map { $0 >= -5 && $0 <= 90 } ?? false
+
+                if !continuesPreviousSession || currentLegacySessionID == nil {
+                    currentLegacySessionID = "legacy-\(UUID().uuidString)"
+                    currentLegacySegmentIndex = 1
+                } else {
+                    currentLegacySegmentIndex += 1
+                }
+
+                sessionID = currentLegacySessionID ?? "legacy-\(UUID().uuidString)"
+                segmentIndex = currentLegacySegmentIndex
+                previousLegacySegmentEnd = segmentStart.addingTimeInterval(duration)
+            }
+
+            if metadata?.sessionID == nil || metadata?.segmentIndex == nil {
+                metadata = RecordingMetadata(
+                    latitude: metadata?.latitude,
+                    longitude: metadata?.longitude,
+                    address: metadata?.address,
+                    locationPath: metadata?.locationPath,
+                    sessionID: sessionID,
+                    segmentIndex: segmentIndex,
+                    sessionStartDate: metadata?.sessionStartDate ?? creation
+                )
+                metadataByFilename[url.lastPathComponent] = metadata
+                didMigrateMetadata = true
+            }
+
+            list.append(Recording(sessionID: sessionID,
+                                  segmentIndex: segmentIndex,
+                                  name: url.lastPathComponent,
                                   duration: duration,
                                   size: size,
                                   url: url,
@@ -1671,6 +1902,10 @@ class RecordingManager: NSObject, ObservableObject {
                                   longitude: metadata?.longitude,
                                   address: metadata?.address,
                                   locationPath: metadata?.locationPath))
+        }
+
+        if didMigrateMetadata {
+            saveMetadata(metadataByFilename)
         }
 
         recordings = list.sorted { ($0.creation ?? .distantPast) > ($1.creation ?? .distantPast) }
@@ -1718,14 +1953,31 @@ class RecordingManager: NSObject, ObservableObject {
     }
 
     func deleteRecording(_ rec: Recording) {
-        try? FileManager.default.removeItem(at: rec.url)
-        recordings.removeAll { $0.id == rec.id }
+        deleteRecordings([rec])
+    }
+
+    /// Removes a group with one metadata write and one published library update. This avoids
+    /// repeatedly rebuilding the entire SwiftUI screen while an export alert is dismissing.
+    func deleteRecordings(_ items: [Recording]) {
+        guard !items.isEmpty else { return }
+
+        let ids = Set(items.map(\.id))
+        let filenames = Set(items.map(\.name))
+        for item in items {
+            try? FileManager.default.removeItem(at: item.url)
+        }
+
+        recordings.removeAll { ids.contains($0.id) }
 
         // Clean up metadata
         var metadata = loadMetadata()
-        metadata.removeValue(forKey: rec.name)
+        for filename in filenames {
+            metadata.removeValue(forKey: filename)
+        }
         saveMetadata(metadata)
-        if lastCompletedSegment?.filename == rec.name {
+
+        if let latestFilename = lastCompletedSegment?.filename,
+           filenames.contains(latestFilename) {
             lastCompletedSegment = recordings.first.map {
                 CompletedSegmentSummary(
                     filename: $0.name,
@@ -1858,15 +2110,27 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
                 address = await LocationManager.shared.getAddress(for: location)
             }
 
-            // Persist GPS metadata to disk
+            let sessionContext = self.sessionContext(for: outputFileURL) ?? SegmentSessionContext(
+                sessionID: self.activeSessionID ?? "orphan-\(UUID().uuidString)",
+                segmentIndex: max(1, self.sessionSegmentCount + 1),
+                sessionStartDate: self.sessionStartDate ?? creation ?? Date()
+            )
+            self.segmentSessionContexts.removeValue(forKey: outputFileURL.lastPathComponent)
+
+            // Persist GPS and session metadata to disk
             self.saveRecordingMetadata(filename: outputFileURL.lastPathComponent,
                                        latitude: latitude,
                                        longitude: longitude,
                                        address: address,
-                                       locationPath: path)
+                                       locationPath: path,
+                                       sessionContext: sessionContext)
+
+            self.sessionSegmentCount += 1
 
             recordings.insert(
-                Recording(name: outputFileURL.lastPathComponent,
+                Recording(sessionID: sessionContext.sessionID,
+                          segmentIndex: sessionContext.segmentIndex,
+                          name: outputFileURL.lastPathComponent,
                           duration: duration,
                           size: size,
                           url: outputFileURL,
@@ -1900,6 +2164,8 @@ extension RecordingManager: AVCaptureFileOutputRecordingDelegate {
                 // Recording stopped - end background task immediately
                 self.activeSegmentStartedAt = nil
                 self.isSegmenting = false
+                self.activeSessionID = nil
+                self.nextSessionSegmentIndex = 1
                 SafeRecordingHandler.shared.endRecordingSession()
             }
         }

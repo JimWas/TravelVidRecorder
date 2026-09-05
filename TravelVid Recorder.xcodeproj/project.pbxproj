@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0491281E2F2F50A7005DEF40 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0491281D2F2F50A7005DEF40 /* StoreKit.framework */; };
 		049128202F2F50E6005DEF40 /* com.jimwas.travelvid.premium.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 0491281F2F2F50E6005DEF40 /* com.jimwas.travelvid.premium.storekit */; };
+		7A0000010000000000000001 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000010000000000000003 /* ZIPFoundation */; };
 		B142FC21B6264E4595909392 /* Pods_TravelVid_Recorder.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4DFAA9BE89D7249C72C246A1 /* Pods_TravelVid_Recorder.framework */; };
 /* End PBXBuildFile section */
 
@@ -59,6 +60,7 @@
 			files = (
 				B142FC21B6264E4595909392 /* Pods_TravelVid_Recorder.framework in Frameworks */,
 				0491281E2F2F50A7005DEF40 /* StoreKit.framework in Frameworks */,
+				7A0000010000000000000001 /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,6 +145,9 @@
 				04AEABD92EB1ACF3006FA46D /* TravelVid Recorder */,
 			);
 			name = "TravelVid Recorder";
+			packageProductDependencies = (
+				7A0000010000000000000003 /* ZIPFoundation */,
+			);
 			productName = "TravelVid Recorder";
 			productReference = 04AEABD72EB1ACF3006FA46D /* TravelVid Recorder.app */;
 			productType = "com.apple.product-type.application";
@@ -216,6 +221,7 @@
 			mainGroup = 04AEABCE2EB1ACF3006FA46D;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				7A0000010000000000000002 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 04AEABD82EB1ACF3006FA46D /* Products */;
@@ -501,7 +507,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.1;
-				MARKETING_VERSION = 3.4;
+				MARKETING_VERSION = 3.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "JimWas.TravelVid-Recorder";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -558,7 +564,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.1;
-				MARKETING_VERSION = 3.4;
+				MARKETING_VERSION = 3.7;
 				PRODUCT_BUNDLE_IDENTIFIER = "JimWas.TravelVid-Recorder";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -702,6 +708,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7A0000010000000000000002 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7A0000010000000000000003 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7A0000010000000000000002 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 04AEABCF2EB1ACF3006FA46D /* Project object */;
 }

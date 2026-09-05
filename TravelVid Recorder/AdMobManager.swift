@@ -19,6 +19,12 @@ class AdMobManager: NSObject, ObservableObject {
     private var isRewardedLoading = false
     private var initializationCompletions: [() -> Void] = []
 
+    /// SubscriptionManager persists the verified entitlement under this key. Reading it here
+    /// keeps ad suppression centralized without depending on a particular SwiftUI view state.
+    private var shouldSuppressInterstitials: Bool {
+        UserDefaults.standard.bool(forKey: "isPremium")
+    }
+
     // MARK: - Ad Unit IDs
     private(set) var interstitialID: String = ""
     private(set) var rewardedID: String = ""
@@ -49,6 +55,12 @@ class AdMobManager: NSObject, ObservableObject {
     
     // MARK: - Interstitial Logic
     func loadInterstitial() {
+        guard !shouldSuppressInterstitials else {
+            interstitial = nil
+            print("🔕 AdMob interstitial skipped: Premium is active.")
+            return
+        }
+
         guard isSDKInitialized else {
             ensureSDKInitialized()
             return
@@ -66,6 +78,12 @@ class AdMobManager: NSObject, ObservableObject {
         InterstitialAd.load(with: interstitialID, request: request) { [weak self] ad, error in
             guard let self else { return }
             self.isInterstitialLoading = false
+
+            guard !self.shouldSuppressInterstitials else {
+                self.interstitial = nil
+                print("🔕 Loaded interstitial discarded: Premium is active.")
+                return
+            }
 
             if let error = error {
                 self.interstitial = nil
@@ -85,6 +103,15 @@ class AdMobManager: NSObject, ObservableObject {
     }
     
     func showInterstitialAd(completion: @escaping () -> Void, attempt: Int = 0) {
+        // Keep the entitlement check at the presentation boundary so every caller—including
+        // export-all, export-selected, previews, and recording dismissal—honors Premium.
+        guard !shouldSuppressInterstitials else {
+            interstitial = nil
+            print("🔕 AdMob interstitial suppressed: Premium is active.")
+            completion()
+            return
+        }
+
         guard let root = rootVC else {
             print("⚠️ AdMob interstitial not presented: no active root view controller.")
             ensureSDKInitialized()
@@ -132,6 +159,11 @@ class AdMobManager: NSObject, ObservableObject {
     }
 
     func prewarmInterstitialIfNeeded() {
+        guard !shouldSuppressInterstitials else {
+            interstitial = nil
+            return
+        }
+
         if interstitial == nil, isSDKInitialized {
             loadInterstitial()
         }

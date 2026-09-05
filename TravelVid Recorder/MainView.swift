@@ -4,6 +4,7 @@ import MapKit
 import StoreKit
 import Photos
 import CoreLocation
+import UIKit
 
 struct MainView: View {
     @StateObject private var manager = RecordingManager()
@@ -11,7 +12,7 @@ struct MainView: View {
     @StateObject private var subscriptionManager = SubscriptionManager.shared
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
-    
+
     // MARK: - UI States
     @State private var coverImageData: Data?
     @State private var pickerItem: PhotosPickerItem?
@@ -26,22 +27,26 @@ struct MainView: View {
     @State private var isLoadingVideo = false
     @State private var showRecorder = false
     @State private var showOnboarding = false
-    
+
     // Selection & Deletion
     @State private var selectMode = false
     @State private var selectedIDs: Set<UUID> = []
     @State private var showDeleteAllAlert = false
     @State private var showDeleteSelectedAlert = false
     @State private var showPaywall = false
-    @State private var showRecordingModePicker = false
     @State private var isShowingOfferCodeRedemption = false
     @State private var showSubscriptionError = false
+    @FocusState private var converterAmountIsFocused: Bool
     
     // Export States
     @State private var showExportAllAlert = false
     @State private var showExportComplete = false
     @State private var showExportPartial = false
     @State private var showExportFailed = false
+    @State private var showCombinedExportComplete = false
+    @State private var showCombinedExportFailed = false
+    @State private var combinedExportError = ""
+    @State private var exportStatusText = "Saving to Photos…"
     @State private var exportedCount = 0
     @State private var exportFailedCount = 0
     @State private var showQuickDelete = false
@@ -50,6 +55,14 @@ struct MainView: View {
     @State private var exportProgress: Double = 0   // 0.0 – 1.0
     @State private var exportTotal: Int = 0
     @State private var exportDone: Int = 0
+    @State private var expandedSessionIDs: Set<String> = []
+    @State private var showArchiveExportAlert = false
+    @State private var showArchiveExportError = false
+    @State private var archiveExportError = ""
+    @State private var archiveShareItem: ArchiveShareItem?
+    @State private var archiveURLPendingCleanup: URL?
+    @State private var archiveExportTask: Task<Void, Never>?
+    @State private var archiveProgressObject: Progress?
 
     // Advanced Settings
     @State private var showAdvancedSettings = false
@@ -169,24 +182,6 @@ struct MainView: View {
             .sheet(isPresented: $showPaywall) {
                 PaywallView()
             }
-            .sheet(isPresented: $showRecordingModePicker) {
-                RecordingModePickerView(
-                    selectedMode: manager.recordingDisplayMode,
-                    isPremium: subscriptionManager.isPremium
-                ) { mode in
-                    showRecordingModePicker = false
-
-                    if mode.requiresPremium && !subscriptionManager.isPremium {
-                        // Let the mode sheet finish dismissing before presenting the paywall.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            showPaywall = true
-                        }
-                    } else {
-                        manager.recordingDisplayMode = mode
-                    }
-                }
-                .presentationDetents([.medium, .large])
-            }
             .sheet(isPresented: $showHistory) {
                 RecordingHistoryView(log: manager.recordingHistory) {
                     manager.clearHistory()
@@ -207,8 +202,12 @@ struct MainView: View {
             // 2. Export Success
             .alert("Export Complete", isPresented: $showExportComplete) {
                 Button("Delete from App", role: .destructive) {
-                    exportedRecordings.forEach { manager.deleteRecording($0) }
+                    let recordingsToDelete = exportedRecordings
                     exportedRecordings = []
+                    // Let the system alert finish dismissing before publishing the library change.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        manager.deleteRecordings(recordingsToDelete)
+                    }
                 }
                 Button("Keep in App") { exportedRecordings = [] }
             } message: {
@@ -218,8 +217,11 @@ struct MainView: View {
             // 2b. Export Partial
             .alert("Some Videos Not Saved", isPresented: $showExportPartial) {
                 Button("Delete Saved Videos", role: .destructive) {
-                    exportedRecordings.forEach { manager.deleteRecording($0) }
+                    let recordingsToDelete = exportedRecordings
                     exportedRecordings = []
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        manager.deleteRecordings(recordingsToDelete)
+                    }
                 }
                 Button("Keep All") { exportedRecordings = [] }
             } message: {
@@ -231,6 +233,29 @@ struct MainView: View {
                 Button("OK") { exportedRecordings = [] }
             } message: {
                 Text("None of the \(exportFailedCount) video(s) could be saved. Your device may not have enough storage space. Please free up space and try again.")
+            }
+            .alert("Combined Video Saved", isPresented: $showCombinedExportComplete) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("The complete recording session was combined and saved to Photos. The original safety segments remain in TravelVid.")
+            }
+            .alert("Could Not Combine Session", isPresented: $showCombinedExportFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(combinedExportError)
+            }
+            .alert("Create ZIP of All Videos?", isPresented: $showArchiveExportAlert) {
+                Button("Create ZIP") {
+                    startArchiveExport()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("TravelVid will package \(manager.recordings.count) videos from \(manager.recordingSessions.count) sessions (\(formatSize(manager.recordings.reduce(0) { $0 + $1.size }))). When it is ready, choose AirDrop or Save to Files. Original recordings will remain in the app.")
+            }
+            .alert("Could Not Create ZIP", isPresented: $showArchiveExportError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(archiveExportError)
             }
 
             // 3. Delete All
@@ -287,7 +312,13 @@ struct MainView: View {
 
             // Video Preview Sheet
             .sheet(item: $previewRecording) { rec in
-                VideoPreviewView(recording: rec)
+                VideoPreviewView(
+                    recording: rec,
+                    watermarkEnabled: manager.videoWatermarkEnabled
+                )
+            }
+            .sheet(item: $archiveShareItem, onDismiss: cleanupSharedArchive) { item in
+                ArchiveShareSheet(archiveURL: item.url)
             }
         }
         // Load Image Task
@@ -438,15 +469,15 @@ struct MainView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 20) {
-                Image(systemName: "square.and.arrow.up")
+                Image(systemName: archiveExportTask == nil ? "square.and.arrow.up" : "archivebox.fill")
                     .font(.system(size: 36))
                     .foregroundColor(.white)
 
-                Text("Saving to Photos…")
+                Text(exportStatusText)
                     .font(.headline)
                     .foregroundColor(.white)
 
-                Text("\(exportDone) of \(exportTotal)")
+                Text(archiveExportTask == nil ? "\(exportDone) of \(exportTotal)" : "\(Int((exportProgress * 100).rounded()))%")
                     .font(.subheadline)
                     .foregroundColor(.white.opacity(0.8))
 
@@ -463,6 +494,15 @@ struct MainView: View {
                 }
                 .frame(height: 12)
                 .padding(.horizontal, 4)
+
+                if archiveExportTask != nil {
+                    Button("Cancel") {
+                        archiveProgressObject?.cancel()
+                        archiveExportTask?.cancel()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.white)
+                }
             }
             .padding(32)
             .background(.ultraThinMaterial)
@@ -473,8 +513,22 @@ struct MainView: View {
 
     private var heroPreviewSection: some View {
         VStack(spacing: 12) {
-            Button {
-                showRecordingModePicker = true
+            Menu {
+                ForEach(RecordingDisplayMode.allCases) { mode in
+                    Button {
+                        selectRecordingMode(mode)
+                    } label: {
+                        Label {
+                            Text(mode.requiresPremium && !subscriptionManager.isPremium
+                                 ? "\(mode.rawValue) — Premium"
+                                 : mode.rawValue)
+                        } icon: {
+                            Image(systemName: mode == manager.recordingDisplayMode
+                                  ? "checkmark.circle.fill"
+                                  : recordingModeIcon(for: mode))
+                        }
+                    }
+                }
             } label: {
                 HStack {
                     Text(manager.recordingDisplayMode.rawValue)
@@ -493,161 +547,239 @@ struct MainView: View {
             .padding(.horizontal)
             
             ZStack {
-                switch manager.recordingDisplayMode {
-                case .coverImage:
-                    if let img = coverImage {
-                        Image(uiImage: img)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(height: 220)
-                            .clipped()
-                            .allowsHitTesting(false)
-                    } else {
-                        placeholderView(icon: "photo", text: "Select Cover Image")
-                    }
-
-                case .videoPlayback:
-                    if let videoURL = manager.selectedVideoURL {
-                        VideoThumbnailView(videoURL: videoURL)
-                            .frame(height: 220)
-                            .clipped()
-                            .allowsHitTesting(false)
-                    } else {
-                        placeholderView(icon: "video.fill", text: "Select Video", color: .purple)
-                    }
-
-                case .fakeCall:
-                    placeholderView(icon: "phone.fill", text: "Fake Call Mode Active", color: .green)
-
-                case .tetris:
-                    placeholderView(icon: "gamecontroller.fill", text: "Tetris Mode Active", color: .blue)
-
-                case .flappyBird:
-                    placeholderView(icon: "bird.fill", text: "Flappy Bird Mode Active", color: .orange)
-
-                case .bitcoin:
-                    placeholderView(icon: "bitcoinsign.circle.fill", text: "Bitcoin Tracker Active", color: .orange)
-
-                case .calculator:
-                    placeholderView(icon: "plus.forwardslash.minus", text: "Calculator Mode Active", color: .gray)
-
-                case .ledBanner:
-                    LEDBannerView(
-                        text: manager.ledBannerText,
-                        useNasalization: manager.ledBannerUseNasalization,
-                        speed: manager.ledBannerSpeed,
-                        isPreview: true
-                    )
-                    .frame(height: 220)
-
-                case .currencyConverter:
-                    CurrencyConverterView(
-                        amountText: $manager.converterAmount,
-                        base: $manager.converterBase,
-                        isPreview: true
-                    )
-                    .frame(height: 220)
-
-                case .worldClock:
-                    placeholderView(icon: "clock.fill", text: "World Clock Active", color: .cyan)
-
-                case .travelDashboard:
-                    TravelDashboardView(
-                        speedUnit: manager.travelSpeedUnit,
-                        audioLevelDB: nil,
-                        audioEnabled: manager.audioOn,
-                        isPreview: true
-                    )
-                    .frame(height: 220)
-                }
-
-                // Overlay Button for Image Picker
-                if manager.recordingDisplayMode == .coverImage {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            PhotosPicker(selection: $pickerItem, matching: .images) {
-                                Image(systemName: "pencil.circle.fill")
-                                    .font(.system(size: 32))
-                                    .foregroundColor(.white)
-                                    .shadow(radius: 4)
-                            }
-                            .padding(10)
-                        }
-                    }
-                }
-
-                // Overlay Button for Video Picker
-                if manager.recordingDisplayMode == .videoPlayback {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            if isLoadingVideo {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(1.5)
-                                    .padding(10)
-                            } else {
-                                let hasVideo = manager.selectedVideoURL != nil
-                                PhotosPicker(selection: $videoPickerItem, matching: .videos) {
-                                    Image(systemName: hasVideo ? "pencil.circle.fill" : "video.badge.plus")
-                                        .font(.system(size: 32))
-                                        .foregroundColor(.white)
-                                        .shadow(radius: 4)
-                                }
-                                .padding(10)
-                            }
-                        }
-                    }
-                }
-
-                // Contact Name Input for Fake Call
-                if manager.recordingDisplayMode == .fakeCall {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            TextField("Contact Name", text: $manager.fakeCallContactName)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(maxWidth: 200)
-                                .padding(10)
-                        }
-                    }
-                }
-
-                if manager.recordingDisplayMode == .currencyConverter {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: 8) {
-                                Picker("Direction", selection: $manager.converterBase) {
-                                    ForEach(CurrencyConverterBase.allCases) { option in
-                                        Text(option.rawValue).tag(option)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(.ultraThinMaterial)
-                                .cornerRadius(10)
-
-                                TextField("Amount", text: $manager.converterAmount)
-                                    .keyboardType(.decimalPad)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: 150)
-                            }
-                            .padding(10)
-                        }
-                    }
-                }
+                recordingModePreview
+                recordingModeConfigurationOverlay
             }
             .frame(height: 220)
             .cornerRadius(20)
             .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
         }
+    }
+
+    private func selectRecordingMode(_ mode: RecordingDisplayMode) {
+        dismissKeyboard()
+
+        if mode.requiresPremium && !subscriptionManager.isPremium {
+            DispatchQueue.main.async {
+                showPaywall = true
+            }
+        } else {
+            manager.recordingDisplayMode = mode
+        }
+    }
+
+    private func recordingModeIcon(for mode: RecordingDisplayMode) -> String {
+        switch mode {
+        case .coverImage: return "photo"
+        case .videoPlayback: return "play.rectangle.fill"
+        case .fakeCall: return "phone.fill"
+        case .tetris: return "gamecontroller.fill"
+        case .flappyBird: return "bird.fill"
+        case .bitcoin: return "bitcoinsign.circle.fill"
+        case .calculator: return "plus.forwardslash.minus"
+        case .ledBanner: return "textformat"
+        case .currencyConverter: return "arrow.left.arrow.right"
+        case .worldClock: return "clock.fill"
+        case .travelDashboard: return "location.north.circle.fill"
+        }
+    }
+
+    /// Type erasure keeps the many recording-mode branches from producing a deeply nested
+    /// SwiftUI generic type. On physical devices that type could overflow Swift's metadata
+    /// resolver stack while the main screen was first rendered.
+    private var recordingModePreview: AnyView {
+        switch manager.recordingDisplayMode {
+        case .coverImage:
+            if let image = coverImage {
+                return AnyView(
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(height: 220)
+                        .clipped()
+                        .allowsHitTesting(false)
+                )
+            }
+            return AnyView(placeholderView(icon: "photo", text: "Select Cover Image"))
+
+        case .videoPlayback:
+            if let videoURL = manager.selectedVideoURL {
+                return AnyView(
+                    VideoThumbnailView(videoURL: videoURL)
+                        .frame(height: 220)
+                        .clipped()
+                        .allowsHitTesting(false)
+                )
+            }
+            return AnyView(placeholderView(icon: "video.fill", text: "Select Video", color: .purple))
+
+        case .fakeCall:
+            return AnyView(placeholderView(icon: "phone.fill", text: "Fake Call Mode Active", color: .green))
+        case .tetris:
+            return AnyView(placeholderView(icon: "gamecontroller.fill", text: "Tetris Mode Active", color: .blue))
+        case .flappyBird:
+            return AnyView(placeholderView(icon: "bird.fill", text: "Flappy Bird Mode Active", color: .orange))
+        case .bitcoin:
+            return AnyView(placeholderView(icon: "bitcoinsign.circle.fill", text: "Bitcoin Tracker Active", color: .orange))
+        case .calculator:
+            return AnyView(placeholderView(icon: "plus.forwardslash.minus", text: "Calculator Mode Active"))
+        case .ledBanner:
+            return AnyView(
+                LEDBannerView(
+                    text: manager.ledBannerText,
+                    useNasalization: manager.ledBannerUseNasalization,
+                    speed: manager.ledBannerSpeed,
+                    isPreview: true
+                )
+                .frame(height: 220)
+            )
+        case .currencyConverter:
+            return AnyView(
+                CurrencyConverterView(
+                    amountText: $manager.converterAmount,
+                    base: $manager.converterBase,
+                    isPreview: true
+                )
+                .frame(height: 220)
+                .clipped()
+                .allowsHitTesting(false)
+            )
+        case .worldClock:
+            return AnyView(placeholderView(icon: "clock.fill", text: "World Clock Active", color: .cyan))
+        case .travelDashboard:
+            return AnyView(
+                TravelDashboardView(
+                    speedUnit: manager.travelSpeedUnit,
+                    audioLevelDB: nil,
+                    audioEnabled: manager.audioOn,
+                    isPreview: true
+                )
+                .frame(height: 220)
+            )
+        }
+    }
+
+    private var recordingModeConfigurationOverlay: AnyView {
+        switch manager.recordingDisplayMode {
+        case .coverImage:
+            return AnyView(
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        PhotosPicker(selection: $pickerItem, matching: .images) {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.white)
+                                .shadow(radius: 4)
+                        }
+                        .padding(10)
+                    }
+                }
+            )
+
+        case .videoPlayback:
+            return AnyView(videoPickerOverlay)
+
+        case .fakeCall:
+            return AnyView(
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        TextField("Contact Name", text: $manager.fakeCallContactName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 200)
+                            .padding(10)
+                    }
+                }
+            )
+
+        case .currencyConverter:
+            return AnyView(currencyConverterConfigurationOverlay)
+
+        default:
+            return AnyView(EmptyView())
+        }
+    }
+
+    private var videoPickerOverlay: some View {
+        let hasSelectedVideo = manager.selectedVideoURL != nil
+
+        return VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                if isLoadingVideo {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        .scaleEffect(1.5)
+                        .padding(10)
+                } else {
+                    PhotosPicker(selection: $videoPickerItem, matching: .videos) {
+                        Image(systemName: hasSelectedVideo ? "pencil.circle.fill" : "video.badge.plus")
+                            .font(.system(size: 32))
+                            .foregroundColor(.white)
+                            .shadow(radius: 4)
+                    }
+                    .padding(10)
+                }
+            }
+        }
+    }
+
+    private var currencyConverterConfigurationOverlay: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                VStack(alignment: .trailing, spacing: 8) {
+                    Picker("Direction", selection: $manager.converterBase) {
+                        ForEach(CurrencyConverterBase.allCases) { option in
+                            Text(option.rawValue).tag(option)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(10)
+
+                    HStack(spacing: 8) {
+                        TextField("Amount", text: $manager.converterAmount)
+                            .keyboardType(.decimalPad)
+                            .focused($converterAmountIsFocused)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 150)
+
+                        if converterAmountIsFocused {
+                            Button {
+                                dismissKeyboard()
+                            } label: {
+                                Image(systemName: "keyboard.chevron.compact.down")
+                                    .font(.headline)
+                                    .frame(width: 34, height: 34)
+                                    .background(.ultraThinMaterial)
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Close keyboard")
+                        }
+                    }
+                }
+                .padding(10)
+            }
+        }
+    }
+
+    private func dismissKeyboard() {
+        converterAmountIsFocused = false
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
     }
     
     private func placeholderView(icon: String, text: String, color: Color = .gray) -> some View {
@@ -708,17 +840,14 @@ struct MainView: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         Spacer()
-                        Text("\(Int(manager.segmentLength/60)) min")
+                        Text(formatSegmentLength(manager.segmentLength))
                             .font(.system(.body, design: .monospaced))
                             .bold()
                     }
                     Slider(
-                        value: Binding(
-                            get: { manager.segmentLength / 60 },
-                            set: { manager.segmentLength = $0 * 60 }
-                        ),
-                        in: 1...10,
-                        step: 1
+                        value: $manager.segmentLength,
+                        in: 60...600,
+                        step: 3
                     )
                     .tint(.blue)
                 }
@@ -841,6 +970,34 @@ struct MainView: View {
                         Toggle("", isOn: $manager.autoStartOnLaunch)
                             .labelsHidden()
                             .tint(.yellow)
+                    }
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+
+                    HStack(spacing: 12) {
+                        Image(systemName: "character.textbox")
+                            .font(.title3)
+                            .foregroundColor(.blue)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("End-Card Watermark")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Adds a short TravelVid Recorder card at the end. The original video is copied without re-encoding.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("TravelVid Recorder")
+                                .font(.custom("Nasalization", size: 15))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.black.opacity(0.72))
+                                .clipShape(Capsule())
+                        }
+                        Spacer()
+                        Toggle("", isOn: $manager.videoWatermarkEnabled)
+                            .labelsHidden()
+                            .tint(.blue)
                     }
                     .padding(12)
                     .background(Color(uiColor: .secondarySystemBackground))
@@ -1136,6 +1293,12 @@ struct MainView: View {
                         } label: {
                             Label("Save All to Photos", systemImage: "square.and.arrow.up")
                         }
+
+                        Button {
+                            showArchiveExportAlert = true
+                        } label: {
+                            Label("AirDrop or Save ZIP", systemImage: "archivebox")
+                        }
                         
                         Button(role: .destructive) {
                             showDeleteAllAlert = true
@@ -1191,12 +1354,140 @@ struct MainView: View {
                 .padding(.vertical, 40)
             } else {
                 LazyVStack(spacing: 12) {
-                    ForEach(manager.recordings) { rec in
-                        recordingRow(rec)
+                    ForEach(manager.recordingSessions) { session in
+                        recordingSessionCard(session)
                     }
                 }
             }
         }
+    }
+
+    private func recordingSessionCard(_ session: RecordingSession) -> some View {
+        let isExpanded = expandedSessionIDs.contains(session.id)
+        let selectedSegmentCount = session.segments.filter { selectedIDs.contains($0.id) }.count
+        let isFullySelected = selectedSegmentCount == session.segments.count
+
+        return VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                if selectMode {
+                    Image(systemName: isFullySelected ? "checkmark.circle.fill" : (selectedSegmentCount > 0 ? "minus.circle.fill" : "circle"))
+                        .font(.title2)
+                        .foregroundColor(selectedSegmentCount > 0 ? .blue : .gray.opacity(0.5))
+                }
+
+                if let lat = session.latitude, let lon = session.longitude {
+                    MapSnapshotView(latitude: lat, longitude: lon)
+                        .frame(width: 58, height: 58)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.blue.opacity(0.1))
+                            .frame(width: 58, height: 58)
+                        Image(systemName: "video.stack.fill")
+                            .foregroundColor(.blue)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(sessionTitle(session))
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        Label("\(session.segments.count) \(session.segments.count == 1 ? "clip" : "clips")", systemImage: "square.stack.3d.up")
+                        Text("•")
+                        Text(formatDuration(session.totalDuration))
+                        Text("•")
+                        Text(formatSize(session.totalSize))
+                    }
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                    if let address = session.address {
+                        Label(address, systemImage: "mappin.and.ellipse")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                if !selectMode {
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                }
+            }
+            .padding()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if selectMode {
+                    toggleSessionSelection(session)
+                } else {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if isExpanded {
+                            expandedSessionIDs.remove(session.id)
+                        } else {
+                            expandedSessionIDs.insert(session.id)
+                        }
+                    }
+                }
+            }
+
+            if isExpanded && !selectMode {
+                Divider()
+
+                VStack(spacing: 12) {
+                    HStack(spacing: 10) {
+                        Button {
+                            attemptExportSessionSeparately(session)
+                        } label: {
+                            Label("Separate Clips", systemImage: "square.stack.3d.up")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            attemptCombinedSessionExport(session)
+                        } label: {
+                            Label("Combine Video", systemImage: "rectangle.stack.badge.play")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .font(.caption.weight(.semibold))
+
+                    if session.sharedLocationPath != nil,
+                       let mapRecording = session.mapRecording {
+                        Button {
+                            selectedMapRecording = mapRecording
+                        } label: {
+                            HStack {
+                                Label("View shared GPS route", systemImage: "map.fill")
+                                Spacer()
+                                Text("\(session.sharedLocationPath?.count ?? 0) points")
+                                    .foregroundColor(.secondary)
+                            }
+                            .font(.subheadline)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 4)
+                    }
+
+                    ForEach(session.segments) { rec in
+                        recordingRow(rec)
+                    }
+                }
+                .padding()
+                .background(Color(uiColor: .secondarySystemGroupedBackground))
+            }
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.04), radius: 4, y: 2)
     }
     
     private func recordingRow(_ rec: Recording) -> some View {
@@ -1287,6 +1578,38 @@ struct MainView: View {
             selectedIDs.insert(id)
         }
     }
+
+    private func toggleSessionSelection(_ session: RecordingSession) {
+        let allSelected = session.segments.allSatisfy { selectedIDs.contains($0.id) }
+        for segment in session.segments {
+            if allSelected {
+                selectedIDs.remove(segment.id)
+            } else {
+                selectedIDs.insert(segment.id)
+            }
+        }
+    }
+
+    private func sessionTitle(_ session: RecordingSession) -> String {
+        guard let date = session.startDate else { return "Recording Session" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let remainingSeconds = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        }
+        return String(format: "%d:%02d", minutes, remainingSeconds)
+    }
+
+    private func formatSegmentLength(_ seconds: TimeInterval) -> String {
+        let totalSeconds = max(60, Int(seconds.rounded()))
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
     
     func formatSize(_ bytes: Int64) -> String {
         let mb = Double(bytes)/(1024*1024)
@@ -1315,6 +1638,24 @@ struct MainView: View {
         }
     }
 
+    private func attemptExportSessionSeparately(_ session: RecordingSession) {
+        let export = { exportRecordings(session.segments) }
+        if subscriptionManager.isPremium {
+            export()
+        } else {
+            AdMobManager.shared.showInterstitialAd(completion: export)
+        }
+    }
+
+    private func attemptCombinedSessionExport(_ session: RecordingSession) {
+        let export = { combineAndExportSession(session) }
+        if subscriptionManager.isPremium {
+            export()
+        } else {
+            AdMobManager.shared.showInterstitialAd(completion: export)
+        }
+    }
+
     private func attemptOpenPreview(for rec: Recording) {
         if subscriptionManager.isPremium {
             previewRecording = rec
@@ -1325,13 +1666,87 @@ struct MainView: View {
             previewRecording = rec
         }
     }
+
+    private func startArchiveExport() {
+        guard !manager.isRecording else {
+            archiveExportError = RecordingArchiveExportError.recordingInProgress.localizedDescription
+            showArchiveExportError = true
+            return
+        }
+
+        let sessions = manager.recordingSessions
+        guard !sessions.isEmpty else {
+            archiveExportError = RecordingArchiveExportError.noRecordings.localizedDescription
+            showArchiveExportError = true
+            return
+        }
+
+        let totalBytes = sessions.reduce(Int64(0)) { $0 + $1.totalSize }
+        let availableBytes = SafeRecordingHandler.shared.checkDiskSpace().available
+        let safetyBuffer: Int64 = 100 * 1_024 * 1_024
+        let requiredBytes = totalBytes + safetyBuffer
+        guard availableBytes >= requiredBytes else {
+            storageErrorMessage = "Creating this ZIP needs about \(formatSize(requiredBytes)) free because the archive is temporarily stored on your iPhone. TravelVid currently has \(formatSize(availableBytes)) available."
+            showStorageError = true
+            return
+        }
+
+        let progress = Progress(totalUnitCount: max(1, totalBytes))
+        archiveProgressObject = progress
+        exportStatusText = "Creating ZIP…"
+        exportProgress = 0
+        exportDone = 0
+        exportTotal = 100
+        isExporting = true
+
+        archiveExportTask = Task {
+            defer {
+                archiveExportTask = nil
+                archiveProgressObject = nil
+                isExporting = false
+            }
+
+            do {
+                let archiveURL = try await RecordingArchiveExporter.createArchive(
+                    sessions: sessions,
+                    archiveProgress: progress
+                ) { fraction in
+                    Task { @MainActor in
+                        exportProgress = min(1, max(0, fraction))
+                    }
+                }
+
+                archiveURLPendingCleanup = archiveURL
+                archiveShareItem = ArchiveShareItem(url: archiveURL)
+            } catch is CancellationError {
+                // Cancellation is user initiated and does not need an error alert.
+            } catch {
+                archiveExportError = error.localizedDescription
+                showArchiveExportError = true
+            }
+        }
+    }
+
+    private func cleanupSharedArchive() {
+        RecordingArchiveExporter.removeArchive(at: archiveURLPendingCleanup)
+        archiveURLPendingCleanup = nil
+    }
     private func exportAllWithConfirmation() {
-        let recordings = manager.recordings
+        exportRecordings(manager.recordings)
+    }
+
+    private func exportSelectedWithConfirmation() {
+        let selectedRecordings = manager.recordings.filter { selectedIDs.contains($0.id) }
+        exportRecordings(selectedRecordings)
+    }
+
+    private func exportRecordings(_ recordings: [Recording]) {
         guard !recordings.isEmpty else { return }
         var successCount = 0
         var failCount = 0
         var saved: [Recording] = []
 
+        exportStatusText = recordings.count == 1 ? "Saving clip to Photos…" : "Saving clips to Photos…"
         exportTotal = recordings.count
         exportDone = 0
         exportProgress = 0
@@ -1339,9 +1754,20 @@ struct MainView: View {
 
         Task {
             for rec in recordings {
+                var temporaryWatermarkedURL: URL?
                 do {
+                    let exportURL: URL
+                    if manager.videoWatermarkEnabled {
+                        exportStatusText = "Appending TravelVid end card…"
+                        let watermarkedURL = try await VideoWatermarkExporter.export(inputURL: rec.url)
+                        temporaryWatermarkedURL = watermarkedURL
+                        exportURL = watermarkedURL
+                    } else {
+                        exportURL = rec.url
+                    }
+
                     try await PHPhotoLibrary.shared().performChanges {
-                        let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: rec.url)
+                        let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: exportURL)
                         if let lat = rec.latitude, let lon = rec.longitude {
                             request?.location = CLLocation(latitude: lat, longitude: lon)
                         }
@@ -1355,6 +1781,9 @@ struct MainView: View {
                     failCount += 1
                     print("Failed to export \(rec.name): \(error)")
                 }
+                if let temporaryWatermarkedURL {
+                    try? FileManager.default.removeItem(at: temporaryWatermarkedURL)
+                }
                 await MainActor.run {
                     exportDone += 1
                     exportProgress = Double(exportDone) / Double(exportTotal)
@@ -1366,6 +1795,15 @@ struct MainView: View {
                 exportedCount = successCount
                 exportFailedCount = failCount
                 exportedRecordings = saved
+                manager.refreshStorageInfo()
+            }
+
+            // Give SwiftUI one frame to remove the blocking export overlay before asking UIKit
+            // to present the result alert. Presenting both in one transaction can leave the
+            // alert visible but unresponsive on a physical device.
+            try? await Task.sleep(nanoseconds: 250_000_000)
+
+            await MainActor.run {
                 if failCount == 0 {
                     showExportComplete = true
                 } else if successCount == 0 {
@@ -1373,60 +1811,85 @@ struct MainView: View {
                 } else {
                     showExportPartial = true
                 }
-                manager.refreshStorageInfo()
             }
         }
     }
-    
-    private func exportSelectedWithConfirmation() {
-        let selectedRecordings = manager.recordings.filter { selectedIDs.contains($0.id) }
-        guard !selectedRecordings.isEmpty else { return }
-        var successCount = 0
-        var failCount = 0
-        var saved: [Recording] = []
 
-        exportTotal = selectedRecordings.count
+    private func combineAndExportSession(_ session: RecordingSession) {
+        // Combining creates a temporary movie before Photos imports its own copy. Keep enough
+        // headroom for both files plus normal capture/database operations.
+        let availableStorage = SafeRecordingHandler.shared.checkDiskSpace().available
+        let requiredStorage = (session.totalSize * 2) + (100 * 1_024 * 1_024)
+        guard availableStorage >= requiredStorage else {
+            storageErrorMessage = "Combining this session needs about \(formatSize(requiredStorage)) free. TravelVid currently has \(formatSize(availableStorage)) available."
+            showStorageError = true
+            return
+        }
+
+        exportStatusText = "Combining \(session.segments.count) clips…"
+        exportTotal = 1
         exportDone = 0
-        exportProgress = 0
+        exportProgress = 0.1
         isExporting = true
 
         Task {
-            for rec in selectedRecordings {
-                do {
-                    try await PHPhotoLibrary.shared().performChanges {
-                        let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: rec.url)
-                        if let lat = rec.latitude, let lon = rec.longitude {
-                            request?.location = CLLocation(latitude: lat, longitude: lon)
-                        }
-                        if let creation = rec.creation {
-                            request?.creationDate = creation
-                        }
+            var combinedURL: URL?
+            var watermarkedURL: URL?
+            do {
+                let outputURL = try await RecordingSessionExporter.combine(session)
+                combinedURL = outputURL
+
+                let photosURL: URL
+                if manager.videoWatermarkEnabled {
+                    await MainActor.run {
+                        exportStatusText = "Appending TravelVid end card…"
+                        exportProgress = 0.65
                     }
-                    successCount += 1
-                    saved.append(rec)
-                } catch {
-                    failCount += 1
-                    print("Failed to export \(rec.name): \(error)")
+                    let renderedURL = try await VideoWatermarkExporter.export(inputURL: outputURL)
+                    watermarkedURL = renderedURL
+                    photosURL = renderedURL
+                } else {
+                    photosURL = outputURL
+                }
+
+                await MainActor.run {
+                    exportStatusText = "Saving combined video…"
+                    exportProgress = 0.8
+                }
+
+                try await PHPhotoLibrary.shared().performChanges {
+                    let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: photosURL)
+                    if let lat = session.latitude, let lon = session.longitude {
+                        request?.location = CLLocation(latitude: lat, longitude: lon)
+                    }
+                    request?.creationDate = session.startDate
+                }
+
+                try? FileManager.default.removeItem(at: outputURL)
+                if let watermarkedURL {
+                    try? FileManager.default.removeItem(at: watermarkedURL)
+                }
+
+                await MainActor.run {
+                    exportDone = 1
+                    exportProgress = 1
+                    isExporting = false
+                    showCombinedExportComplete = true
+                    manager.refreshStorageInfo()
+                }
+            } catch {
+                if let combinedURL {
+                    try? FileManager.default.removeItem(at: combinedURL)
+                }
+                if let watermarkedURL {
+                    try? FileManager.default.removeItem(at: watermarkedURL)
                 }
                 await MainActor.run {
-                    exportDone += 1
-                    exportProgress = Double(exportDone) / Double(exportTotal)
+                    isExporting = false
+                    combinedExportError = error.localizedDescription
+                    showCombinedExportFailed = true
+                    manager.refreshStorageInfo()
                 }
-            }
-
-            await MainActor.run {
-                isExporting = false
-                exportedCount = successCount
-                exportFailedCount = failCount
-                exportedRecordings = saved
-                if failCount == 0 {
-                    showExportComplete = true
-                } else if successCount == 0 {
-                    showExportFailed = true
-                } else {
-                    showExportPartial = true
-                }
-                manager.refreshStorageInfo()
             }
         }
     }
@@ -1435,72 +1898,6 @@ struct MainView: View {
 // MARK: - Video Helpers
 import UniformTypeIdentifiers
 import AVKit
-
-private struct RecordingModePickerView: View {
-    let selectedMode: RecordingDisplayMode
-    let isPremium: Bool
-    let onSelect: (RecordingDisplayMode) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List(RecordingDisplayMode.allCases) { mode in
-                Button {
-                    onSelect(mode)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: iconName(for: mode))
-                            .frame(width: 28)
-                            .foregroundStyle(.tint)
-
-                        Text(mode.rawValue)
-                            .foregroundStyle(.primary)
-
-                        Spacer()
-
-                        if mode.requiresPremium && !isPremium {
-                            Image(systemName: "lock.fill")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if mode == selectedMode {
-                            Image(systemName: "checkmark")
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.tint)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .navigationTitle("Recording Mode")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-    }
-
-    private func iconName(for mode: RecordingDisplayMode) -> String {
-        switch mode {
-        case .coverImage: return "photo"
-        case .videoPlayback: return "play.rectangle.fill"
-        case .fakeCall: return "phone.fill"
-        case .tetris: return "gamecontroller.fill"
-        case .flappyBird: return "bird.fill"
-        case .bitcoin: return "bitcoinsign.circle.fill"
-        case .calculator: return "plus.forwardslash.minus"
-        case .ledBanner: return "textformat"
-        case .currencyConverter: return "arrow.left.arrow.right"
-        case .worldClock: return "clock.fill"
-        case .travelDashboard: return "location.north.circle.fill"
-        }
-    }
-}
 
 struct Movie: Transferable {
     let url: URL
@@ -1514,6 +1911,21 @@ struct Movie: Transferable {
             return Self.init(url: copy)
         }
     }
+}
+
+struct ArchiveShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+struct ArchiveShareSheet: UIViewControllerRepresentable {
+    let archiveURL: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [archiveURL], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 struct VideoThumbnailView: View {
@@ -1746,6 +2158,7 @@ import AVFoundation
 
 struct VideoPreviewView: View {
     let recording: Recording
+    let watermarkEnabled: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var isLoading = true
@@ -1836,7 +2249,7 @@ struct VideoPreviewView: View {
                         player?.pause()
                         showTrimmer = true
                     } label: {
-                        Label("Trim", systemImage: "trim")
+                        Label("Trim", systemImage: "scissors")
                     }
                     .disabled(player == nil)
                 }
@@ -1850,13 +2263,36 @@ struct VideoPreviewView: View {
             }
             .sheet(isPresented: $showTrimmer) {
                 VideoTrimmerView(recording: recording) { trimmedURL in
-                    PHPhotoLibrary.shared().performChanges {
-                        let req = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: trimmedURL)
-                        if let lat = recording.latitude, let lon = recording.longitude {
-                            req?.location = CLLocation(latitude: lat, longitude: lon)
+                    Task {
+                        var watermarkedURL: URL?
+                        do {
+                            let photosURL: URL
+                            if watermarkEnabled {
+                                let renderedURL = try await VideoWatermarkExporter.export(inputURL: trimmedURL)
+                                watermarkedURL = renderedURL
+                                photosURL = renderedURL
+                            } else {
+                                photosURL = trimmedURL
+                            }
+
+                            try await PHPhotoLibrary.shared().performChanges {
+                                let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: photosURL)
+                                if let lat = recording.latitude, let lon = recording.longitude {
+                                    request?.location = CLLocation(latitude: lat, longitude: lon)
+                                }
+                                request?.creationDate = recording.creation
+                            }
+                            await MainActor.run {
+                                showTrimExportSuccess = true
+                            }
+                        } catch {
+                            print("Failed to export trimmed video: \(error)")
+                        }
+                        try? FileManager.default.removeItem(at: trimmedURL)
+                        if let watermarkedURL {
+                            try? FileManager.default.removeItem(at: watermarkedURL)
                         }
                     }
-                    showTrimExportSuccess = true
                 }
             }
             .alert("Exported", isPresented: $showTrimExportSuccess) {

@@ -14,7 +14,21 @@
 
   ],
   "products" : [
-
+    {
+      "displayPrice" : "99.00",
+      "familyShareable" : false,
+      "internalID" : "F9E8D7C6",
+      "localizations" : [
+        {
+          "description" : "Unlock all current and future TravelVid Recorder premium features with one purchase.",
+          "displayName" : "TravelVid Premium Lifetime",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.jimwas.travelvid.premium.lifetime",
+      "referenceName" : "TravelVid Premium Lifetime",
+      "type" : "NonConsumable"
+    }
   ],
   "settings" : {
     "_applicationInternalID" : "6754813702",

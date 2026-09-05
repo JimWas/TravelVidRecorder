@@ -15,7 +15,7 @@ This file provides comprehensive guidance to AI assistants when working with thi
 ## BUILD & RUN
 
 ### Prerequisites
-- iOS 15.0+
+- iOS 17.6+
 - Xcode with SwiftUI support
 - Physical device (camera features don't work in simulator)
 - CocoaPods installed
@@ -57,6 +57,9 @@ TravelVid Recorder/
 ├── MainView.swift                  # Main hub - settings, gallery, controls
 ├── RecordingView.swift             # Full-screen recording with decoy UI
 ├── RecordingManager.swift          # Core recording logic
+├── RecordingArchiveExporter.swift  # ZIP backup, metadata, and GPS route export
+├── RecordingSessionExporter.swift  # Combined session export
+├── VideoWatermarkExporter.swift    # Low-processing branded end card
 ├── SafeRecordingHandler.swift      # Background execution, file safety
 ├── LocationManager.swift           # GPS tracking, reverse geocoding
 ├── SubscriptionManager.swift       # StoreKit v2 subscriptions
@@ -67,6 +70,8 @@ TravelVid Recorder/
 ├── TetrisGame.swift                # Full Tetris game
 ├── FlappyBirdView.swift            # Flappy Bird with difficulty levels
 ├── CalculatorView.swift            # Functional calculator
+├── CurrencyConverterView.swift     # USD/VND and USD/KHR converter
+├── LEDBannerView.swift              # Scrolling banner decoy
 ├── BitcoinPriceView.swift          # Bitcoin price tracker
 ├── TravelDashboardView.swift       # Time, speed, compass, dBFS, and map display
 ├── LoopingVideoPlayerView.swift    # Looping video player
@@ -84,7 +89,7 @@ TravelVid Recorder/
 ```swift
 @Published var isRecording = false              // Current recording state
 @Published var recordings: [Recording] = []     // Library of saved recordings
-@Published var segmentLength: TimeInterval = 120 // Segment duration (seconds)
+@Published var segmentLength: TimeInterval = 117 // Segment duration (seconds)
 @Published var selectedResolution: Resolution = .p1080
 @Published var audioOn = true                   // Include audio
 @Published var enableStabilization = false      // Video stabilization
@@ -98,6 +103,7 @@ TravelVid Recorder/
 @Published var cameraType: CameraType = .ultraWide
 @Published var selectedVideoURL: URL?           // For video playback mode
 @Published var showRecordingIndicator: Bool = true
+@Published var videoWatermarkEnabled: Bool = true // Append end card to Photos exports
 @Published var fakeCallContactName: String = "Customer Service"
 ```
 
@@ -235,10 +241,11 @@ static let shared = SubscriptionManager()
 @Published private(set) var isPremium: Bool = false
 @Published private(set) var products: [Product] = []
 
-private let productID = "com.jimwas.travelvid.premium"
+static let monthlyProductID = "com.jimwas.travelvid.premium"
+static let lifetimeProductID = "com.jimwas.travelvid.premium.lifetime"
 
 func loadProducts() async
-func purchase() async
+func purchase(_ product: Product) async -> Bool
 func restorePurchases() async
 func refreshAfterOfferCodeRedemption() async
 func updateSubscriptionStatus() async
@@ -250,9 +257,12 @@ func togglePremiumForTesting()              // Manual toggle in DEBUG
 ```
 
 #### Subscription Details
-- **Product ID**: `com.jimwas.travelvid.premium`
-- **Price**: $3.99/month
+- **Monthly Product ID**: `com.jimwas.travelvid.premium`
+- **Monthly Price**: $3.99/month
 - **Trial**: 2-week free introductory offer
+- **Lifetime Product ID**: `com.jimwas.travelvid.premium.lifetime`
+- **Lifetime Price**: $99 one-time non-consumable purchase
+- **Entitlement**: Either an active monthly subscription or a verified Lifetime purchase unlocks Premium
 - **Offer Codes**: Redeemed through Apple's StoreKit offer-code sheet from the paywall or Settings; premium status is refreshed with `AppStore.sync()` afterward
 
 ### 5. AdMobManager.swift
@@ -270,7 +280,7 @@ func showRewardedAd(completion: @escaping (Bool) -> Void)
 func showInterstitialAd(completion: @escaping () -> Void)
 ```
 
-**Ad Flow**: Free users must watch rewarded ad to export videos. Premium users skip ads. AdMob SDK now initializes lazily on first ad request, not at app launch.
+**Ad Flow**: Free users must watch a rewarded ad to export videos. Premium users skip ads. The app initializes AdMob during main-screen startup and every ad entry point remains safe if initialization is still completing.
 
 **Ad Diagnostics**:
 - Duplicate interstitial and rewarded loads are ignored while a request is already in progress
@@ -299,6 +309,11 @@ Uses KVO on `AVAudioSession.outputVolume` to detect button presses, then resets 
 - Tap recording → Opens video preview player
 - Tap map thumbnail → Opens full map view with location
 - Long press / Select mode → Multi-select for batch operations
+- AirDrop or Save ZIP → Creates a session-organized archive of every completed video, metadata manifest, and GeoJSON route, then opens the system share sheet
+- ZIP creation validates free space, reports progress, supports cancellation, and removes its temporary file after sharing
+- Session cards → Show total duration and size, shared GPS route, and expandable original safety clips
+- Session export → Saves clips separately or combines them into one video
+- End-Card Watermark → Optionally appends a 1.5-second branded card to Photos exports without re-encoding the recorded video or audio
 
 **Recording Readiness**:
 - The main screen includes a passive status card; it never inserts another screen into the record-button flow
@@ -413,6 +428,8 @@ Thumbnail map preview:
 ```swift
 struct Recording: Identifiable {
     let id = UUID()
+    let sessionID: String      // Stable ID shared by all safety segments
+    let segmentIndex: Int      // One-based order within the session
     let name: String           // Filename
     let duration: TimeInterval // Length in seconds
     let size: Int64           // File size in bytes
@@ -425,6 +442,9 @@ struct Recording: Identifiable {
 }
 ```
 
+### RecordingSession
+`RecordingSession` groups segments by `sessionID` and exposes aggregate duration, size, start date, address, and the longest recorded GPS path as the shared route.
+
 ### RecordingMetadata (JSON persistence)
 ```swift
 struct RecordingMetadata: Codable {
@@ -432,6 +452,9 @@ struct RecordingMetadata: Codable {
     let longitude: Double?
     let address: String?
     let locationPath: [LocationPoint]?
+    let sessionID: String?
+    let segmentIndex: Int?
+    let sessionStartDate: Date?
 }
 ```
 
@@ -442,8 +465,8 @@ struct RecordingMetadata: Codable {
 ```
 Documents/
 └── Videos/
-    ├── 2024-01-15-14-30-22-ABC123.mov  // Recorded videos
-    ├── 2024-01-15-14-32-22-DEF456.mov
+    ├── TV_<session-id>_0001_<timestamp>.mov  // Safety segment 1
+    ├── TV_<session-id>_0002_<timestamp>.mov  // Safety segment 2
     ├── metadata.json                    // GPS data for all videos
     └── SelectedVideos/
         └── selected-video-UUID.mov      // Video for playback mode
@@ -502,7 +525,7 @@ NotificationCenter.default.post(name: NSNotification.Name("EmergencyStopRecordin
 - Watchdog verifies recording every 10s (stats logging throttled to 60s)
 - Disk space checked every 30s
 - Thermal state monitored
-- Segment timer fires every N seconds (default 120s)
+- Segment timer fires every N seconds (default 117s)
 
 ### Segment Rotation
 1. Timer fires or forced by thermal/memory pressure
@@ -573,7 +596,7 @@ Watch Xcode console for these logs:
 ```
 📊 Watchdog: Recording active - 45s, 12340KB   // every ~60s
 🌡️ Thermal state: Fair - device warming up
-✅ Saved segment: 2024-01-15-14-30-22-ABC123.mov (120s, 245MB)
+✅ Saved segment: TV_<session-id>_0001_<timestamp>.mov (117s, 245MB)
 ⚠️ Disk space getting low: 450MB available
 🚨 Watchdog detected recording stopped unexpectedly!
 ```
@@ -594,7 +617,7 @@ The Simulator is suitable for compiling and UI checks, but not for validating ca
 3. Start recording and verify time, speed, heading, microphone dBFS, and map location update without another confirmation step.
 4. Turn Record Audio off and confirm the noise card displays `MIC OFF` without requesting microphone access.
 5. Deny location access and confirm recording continues with unavailable speed, heading, and map states.
-6. Verify two-minute segmentation and interruption recovery while the dashboard remains visible.
+6. Verify 1:57 default segmentation and interruption recovery while the dashboard remains visible.
 
 The noise value is relative digital full scale (`dBFS`), not calibrated environmental sound pressure (`dB SPL`).
 
@@ -620,7 +643,7 @@ The noise value is relative digital full scale (`dBFS`), not calibrated environm
 ### Change Segment Length Limits
 In MainView.swift, find the Slider:
 ```swift
-Slider(value: $segmentMinutes, in: 1...10, step: 1)
+Slider(value: $manager.segmentLength, in: 60...600, step: 3)
 ```
 
 ### Add New Stop Gesture
@@ -641,6 +664,9 @@ In AdMobManager.swift:
 ```ruby
 pod 'Google-Mobile-Ads-SDK'
 ```
+
+### Swift Package Manager
+- `ZIPFoundation` 0.9.20 or newer compatible 0.x release — ZIP and ZIP64 archive creation
 
 ### Frameworks
 - AVFoundation - Video recording
